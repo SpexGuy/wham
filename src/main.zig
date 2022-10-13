@@ -116,6 +116,7 @@ pub const Room = struct {
 pub const RoomType = enum {
     normal,
     loading,
+    level_select,
 };
 
 pub fn init(app: *App, core: *mach.Core) !void {
@@ -304,22 +305,70 @@ pub fn init(app: *App, core: *mach.Core) !void {
 
     app.meshes.init(core.device, core.device.getQueue());
 
-    for (levels[0]) |room| app.map.append(gpa, room) catch unreachable;
-    app.map.append(gpa, .{
-        .color = 0,
-        .edges = .{
-            .{ .to_room = 0, .in_dir = 0 },
-            .{ .to_room = NO_ROOM, .in_dir = 0 },
-            .{ .to_room = NO_ROOM, .in_dir = 0 },
-            .{ .to_room = NO_ROOM, .in_dir = 0 },
-        },
-        .cube = NO_ROOM,
-        .type = .loading,
-    }) catch unreachable;
-    app.current_room = @intCast(u30, app.map.len - 1);
+    app.loadLevelSelect();
 }
 
 pub fn deinit(_: *App, _: *mach.Core) void {}
+
+fn loadLevelSelect(app: *App) void {
+    app.map.shrinkRetainingCapacity(0);
+    var total_len = levels.len; // select rooms
+    for (levels) |l| total_len += l.len; // level rooms
+    app.map.ensureTotalCapacity(gpa, total_len + 1) catch @panic("Out of memory!");
+    app.map.resize(gpa, total_len) catch unreachable;
+
+    std.debug.assert(levels.len & 1 == 0); // This layout only works with an even number of levels
+
+    // Init the rooms
+    var level_start: u30 = @intCast(u30, levels.len);
+    for (levels) |level, i| {
+        var left_room: usize = if (i == 0) levels.len-1 else i-1;
+        var right_room: usize = if (i == levels.len-1) 0 else i+1;
+        if (i & 1 == 1) {
+            const tmp = right_room;
+            right_room = left_room;
+            left_room = tmp;
+        }
+
+        // Level select room
+        app.map.set(i, .{
+            .color = 0xFF000000,
+            .edges = .{
+                .{ .to_room = level_start, .in_dir = 0 },
+                .{ .to_room = @intCast(u30, right_room), .in_dir = 3 },
+                .{ .to_room = NO_ROOM, .in_dir = 0 },
+                .{ .to_room = @intCast(u30, left_room), .in_dir = 1 },
+            },
+            .cube = NO_ROOM,
+            .type = .level_select,
+        });
+
+        // Game rooms
+        for (level) |room, room_id| {
+            app.map.set(level_start + room_id, .{
+                .color = room.color,
+                .edges = .{
+                    .{ .to_room = room.edges[0].to_room +| level_start, .in_dir = room.edges[0].in_dir },
+                    .{ .to_room = room.edges[1].to_room +| level_start, .in_dir = room.edges[1].in_dir },
+                    .{ .to_room = room.edges[2].to_room +| level_start, .in_dir = room.edges[2].in_dir },
+                    .{ .to_room = room.edges[3].to_room +| level_start, .in_dir = room.edges[3].in_dir },
+                },
+                .cube = room.cube +| level_start,
+                .type = room.type,
+            });
+        }
+
+        level_start += @intCast(u30, level.len);
+    }
+}
+
+fn loadLevel(app: *App, index: usize) void {
+    app.map.shrinkRetainingCapacity(0);
+    app.map.ensureTotalCapacity(gpa, levels[index].len) catch @panic("Out of memory!");
+    for (levels[index]) |room| app.map.appendAssumeCapacity(room);
+    app.current_room = 0;
+    app.held_cube = NO_ROOM;
+}
 
 pub fn update(app: *App, core: *mach.Core) !void {
     // Poll inputs
@@ -637,27 +686,13 @@ fn updateSimulation(app: *App, raw_delta_time: f32) void {
         // transition to the "solved" state
         app.held_cube = NO_ROOM;
         const room = app.map.get(app.current_room);
-        // load the next level
+        // load the level select, and point at it
         var next_level_id = app.current_level + 1;
         if (next_level_id >= levels.len) next_level_id = 0;
         app.current_level = next_level_id;
-        const next_level = levels[next_level_id];
-        app.map.shrinkRetainingCapacity(0);
-        app.map.ensureTotalCapacity(gpa, next_level.len + 2) catch unreachable;
-        for (next_level) |item| app.map.appendAssumeCapacity(item);
-        const transition_room = @intCast(u30, app.map.len);
-        app.map.appendAssumeCapacity(.{
-            .color = 0xFF000000,
-            .edges = .{
-                .{ .to_room = 0, .in_dir = 0 },
-                .{ .to_room = NO_ROOM, .in_dir = 0 },
-                .{ .to_room = NO_ROOM, .in_dir = 0 },
-                .{ .to_room = NO_ROOM, .in_dir = 0 },
-            },
-            .cube = NO_ROOM,
-            .type = .loading,
-        });
-        const new_room = @intCast(u30, app.map.len);
+
+        app.loadLevelSelect();
+        const transition_room = @intCast(u30, next_level_id);
         app.map.appendAssumeCapacity(.{
             .color = room.color,
             .edges = .{
@@ -669,7 +704,7 @@ fn updateSimulation(app: *App, raw_delta_time: f32) void {
             .cube = NO_ROOM,
             .type = .loading,
         });
-        app.current_room = new_room;
+        app.current_room = @intCast(u30, app.map.len - 1);
     }
 }
 
@@ -687,8 +722,8 @@ fn isGameSolved(app: *App) bool {
 var last_cksum: u32 = 0xFFFFFFFF;
 
 fn moveCurrentRoom(app: *App, direction: u2) void {
-    const old_room = app.current_room;
-    const remove_old_room = app.map.items(.type)[app.current_room] == .loading;
+    const old_room_index = app.current_room;
+    const was_level_select = app.map.items(.type)[app.current_room] == .level_select;
 
     std.debug.print("moveCurrentRoom({})\n", .{direction});
     const edge_index = app.current_rotation +% direction;
@@ -698,9 +733,10 @@ fn moveCurrentRoom(app: *App, direction: u2) void {
     const rotation_delta = edge.in_dir -% edge_index;
     app.current_rotation +%= rotation_delta;
 
-    if (remove_old_room) {
-        std.debug.assert(old_room == app.map.len - 1);
-        app.map.len -= 1;
+    const is_level_select = app.map.items(.type)[app.current_room] == .level_select;
+    if (was_level_select and !is_level_select) {
+        // A level was selected, load it properly
+        app.loadLevel(old_room_index);
     }
 
     app.pending_grab_block = false;
