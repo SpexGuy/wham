@@ -3,6 +3,8 @@ const mach = @import("mach");
 const gpu = @import("gpu");
 const zm = @import("zmath");
 const levels = @import("levels.zig").levels;
+const dims = @import("dimensions.zig");
+const StaticMeshes = @import("StaticMeshes.zig");
 
 const Vec = zm.Vec;
 const Mat = zm.Mat;
@@ -26,6 +28,8 @@ const ObjectUniforms = extern struct {
 
 const gpa = std.heap.c_allocator;
 
+meshes: StaticMeshes,
+
 view_uniform_buffer: *gpu.Buffer,
 view_bindings: *gpu.BindGroup,
 held_object_uniform_buffer: *gpu.Buffer,
@@ -33,25 +37,6 @@ held_object_bindings: *gpu.BindGroup,
 
 instanced_pipeline: *gpu.RenderPipeline,
 object_pipeline: *gpu.RenderPipeline,
-
-mesh_buffer: *gpu.Buffer,
-mesh_vertex_offset: u32,
-mesh_vertex_size: u32,
-mesh_indices_offset: u32,
-mesh_indices_size: u32,
-
-room_base_vertex: i32,
-room_base_index: u32,
-room_indices_count: u32,
-wall_base_vertex: i32,
-wall_base_index: u32,
-wall_indices_count: u32,
-door_base_vertex: i32,
-door_base_index: u32,
-door_indices_count: u32,
-cube_base_vertex: i32,
-cube_base_index: u32,
-cube_indices_count: u32,
 
 instance_list: *gpu.Buffer,
 keys: u8 = 0,
@@ -87,7 +72,7 @@ forward_dir: Vec = zm.f32x4(1,0,0,0),
 look_dir: Vec = zm.f32x4(1,0,0,0),
 right_dir: Vec = zm.f32x4(0,1,0,0),
 
-player_pos: Vec = zm.f32x4(0,player_height,0,0),
+player_pos: Vec = zm.f32x4(0,dims.player_height,0,0),
 
 current_level: usize = 0,
 map: std.MultiArrayList(Room) = .{},
@@ -99,17 +84,6 @@ const Dir = struct {
     const right: u8 = 0b1000;
     const shift: u8 = 0b10000;
 };
-
-const door_width = 0.2 * 0.5;
-const door_height = 0.4;
-const room_height = 1.0;
-const room_width = 0.5;
-const walk_speed = 0.8;
-const run_speed = 1.4;
-const collision_tolerance = 0.03;
-const frame_depth = 0.015;
-
-const player_height = 0.26;
 
 const MAX_ROOMS = 120;
 const MAX_DOORS = MAX_ROOMS + 20;
@@ -143,201 +117,7 @@ pub const RoomType = enum {
 };
 
 pub fn init(app: *App, core: *mach.Core) !void {
-    // zig fmt: off
-    const room_verts = [6*4][3]f32{
-        .{ -door_width, 0, -room_width },
-        .{ -door_width, door_height, -room_width },
-        .{  door_width, door_height, -room_width },
-        .{  door_width, 0, -room_width },
-        .{  room_width, 0, -room_width },
-        .{  room_width, room_height, -room_width },
 
-        .{ room_width, 0, -door_width },
-        .{ room_width, door_height, -door_width },
-        .{ room_width, door_height,  door_width },
-        .{ room_width, 0,  door_width },
-        .{ room_width, 0,  room_width },
-        .{ room_width, room_height, room_width },
-
-        .{  door_width, 0, room_width },
-        .{  door_width, door_height, room_width },
-        .{ -door_width, door_height, room_width },
-        .{ -door_width, 0, room_width },
-        .{ -room_width, 0, room_width },
-        .{ -room_width, room_height, room_width },
-
-        .{ -room_width, 0, door_width },
-        .{ -room_width, door_height, door_width },
-        .{ -room_width, door_height, -door_width },
-        .{ -room_width, 0, -door_width },
-        .{ -room_width, 0, -room_width },
-        .{ -room_width, room_height, -room_width },
-    };
-
-    const room_indices = [_]u16{
-        0, 1, 22,
-        22, 1, 23,
-        23, 1, 5,
-        5, 1, 2,
-        5, 2, 4,
-        4, 2, 3,
-
-        6, 7, 4,
-        4, 7, 5,
-        5, 7, 11,
-        11, 7, 8,
-        11, 8, 10,
-        10, 8, 9,
-
-        12, 13, 10,
-        10, 13, 11,
-        11, 13, 17,
-        17, 13, 14,
-        17, 14, 16,
-        16, 14, 15,
-
-        18, 19, 16,
-        16, 19, 17,
-        17, 19, 23,
-        23, 19, 20,
-        23, 20, 22,
-        22, 20, 21,
-
-        5, 11, 17,
-        17, 23, 5,
-
-        4, 16, 10,
-        16, 4, 22,
-    };
-
-    const wall_indices = [_]u16{
-        6, 8, 7,
-        8, 6, 9,
-    };
-
-    const door_verts = [_][3]f32{
-        .{ room_width, 0, -door_width - frame_depth },
-        .{ room_width - frame_depth, 0, -door_width - frame_depth },
-        .{ room_width - frame_depth, 0, -door_width + frame_depth },
-        .{ room_width, 0, -door_width + frame_depth },
-
-        .{ room_width, door_height + frame_depth, -door_width - frame_depth },
-        .{ room_width - frame_depth, door_height + frame_depth, -door_width - frame_depth },
-        .{ room_width - frame_depth, door_height - frame_depth, -door_width + frame_depth },
-        .{ room_width, door_height - frame_depth, -door_width + frame_depth },
-
-        .{ room_width, door_height + frame_depth, door_width + frame_depth },
-        .{ room_width - frame_depth, door_height + frame_depth, door_width + frame_depth },
-        .{ room_width - frame_depth, door_height - frame_depth, door_width - frame_depth },
-        .{ room_width, door_height - frame_depth, door_width - frame_depth },
-
-        .{ room_width, 0, door_width + frame_depth },
-        .{ room_width - frame_depth, 0, door_width + frame_depth },
-        .{ room_width - frame_depth, 0, door_width - frame_depth },
-        .{ room_width, 0, door_width - frame_depth },
-    };
-
-    const door_indices = [_]u16{
-        4, 0, 1,
-        1, 5, 4,
-        5, 1, 2,
-        2, 6, 5,
-        6, 2, 3,
-        3, 7, 6,
-
-        8, 4, 5,
-        5, 9, 8,
-        9, 5, 6,
-        6, 10, 9,
-        10, 6, 7,
-        7, 11, 10,
-
-        12, 8, 9,
-        9, 13, 12,
-        13, 9, 10,
-        10, 14, 13,
-        14, 10, 11,
-        11, 15, 14,
-    };
-
-    const cube_verts = [_][3]f32{
-        .{  0.05,  0.05,  0.05 },
-        .{ -0.05,  0.05,  0.05 },
-        .{ -0.05, -0.05,  0.05 },
-        .{  0.05, -0.05,  0.05 },
-        .{  0.05, -0.05, -0.05 },
-        .{ -0.05, -0.05, -0.05 },
-        .{ -0.05,  0.05, -0.05 },
-        .{  0.05,  0.05, -0.05 },
-    };
-
-    const cube_indices = [_]u16{
-        0, 1, 2,
-        2, 3, 0,
-        
-        4, 3, 2,
-        2, 5, 4,
-
-        6, 4, 5,
-        4, 6, 7,
-
-        1, 0, 7,
-        7, 6, 1,
-
-        2, 1, 6,
-        6, 5, 2,
-
-        0, 3, 4,
-        4, 7, 0,
-    };
-    // zig fmt: on
-
-    // Lay out the buffer
-    var buffer_size: u32 = 0;
-    const room_vertex_offset = buffer_size;
-    const room_base_vertex = @divExact(buffer_size, @sizeOf([3]f32));
-    const wall_base_vertex = room_base_vertex;
-    buffer_size += @sizeOf(@TypeOf(room_verts));
-    const door_vertex_offset = buffer_size;
-    const door_base_vertex = @divExact(buffer_size, @sizeOf([3]f32));
-    buffer_size += @sizeOf(@TypeOf(door_verts));
-    const cube_vertex_offset = buffer_size;
-    const cube_base_vertex = @divExact(buffer_size, @sizeOf([3]f32));
-    buffer_size += @sizeOf(@TypeOf(cube_verts));
-    const mesh_vertices_size = buffer_size;
-
-    var index_offset: u32 = 0;
-    const mesh_indices_offset = buffer_size;
-    const room_indices_offset = mesh_indices_offset;
-    const room_base_index = index_offset;
-    buffer_size += @sizeOf(@TypeOf(room_indices));
-    index_offset += @intCast(u32, room_indices.len);
-    const wall_indices_offset = buffer_size;
-    const wall_base_index = index_offset;
-    buffer_size += @sizeOf(@TypeOf(wall_indices));
-    index_offset += @intCast(u32, wall_indices.len);
-    const door_indices_offset = buffer_size;
-    const door_base_index = index_offset;
-    buffer_size += @sizeOf(@TypeOf(door_indices));
-    index_offset += @intCast(u32, door_indices.len);
-    const cube_indices_offset = buffer_size;
-    const cube_base_index = index_offset;
-    buffer_size += @sizeOf(@TypeOf(cube_indices));
-    index_offset += @intCast(u32, cube_indices.len);
-    const mesh_indices_size = buffer_size - mesh_indices_offset;
-
-    const mesh_buffer = core.device.createBuffer(&gpu.Buffer.Descriptor{
-        .label = "mesh_buffer",
-        .usage = .{ .copy_dst = true, .vertex = true, .index = true },
-        .size = buffer_size,
-    });
-    core.device.getQueue().writeBuffer(mesh_buffer, room_vertex_offset, &room_verts);
-    core.device.getQueue().writeBuffer(mesh_buffer, door_vertex_offset, &door_verts);
-    core.device.getQueue().writeBuffer(mesh_buffer, cube_vertex_offset, &cube_verts);
-    core.device.getQueue().writeBuffer(mesh_buffer, room_indices_offset, &room_indices);
-    core.device.getQueue().writeBuffer(mesh_buffer, wall_indices_offset, &wall_indices);
-    core.device.getQueue().writeBuffer(mesh_buffer, door_indices_offset, &door_indices);
-    core.device.getQueue().writeBuffer(mesh_buffer, cube_indices_offset, &cube_indices);
 
     const instance_list = core.device.createBuffer(&gpu.Buffer.Descriptor{
         .label = "instance_list",
@@ -506,32 +286,17 @@ pub fn init(app: *App, core: *mach.Core) !void {
         .instanced_pipeline = instanced_pipeline,
         .object_pipeline = object_pipeline,
 
-        .mesh_buffer = mesh_buffer,
-        .mesh_vertex_offset = 0,
-        .mesh_vertex_size = mesh_vertices_size,
-        .mesh_indices_offset = mesh_indices_offset,
-        .mesh_indices_size = mesh_indices_size,
-
-        .room_base_index = room_base_index,
-        .room_indices_count = room_indices.len,
-        .room_base_vertex = @intCast(i32, room_base_vertex),
-        .wall_base_index = wall_base_index,
-        .wall_indices_count = wall_indices.len,
-        .wall_base_vertex = @intCast(i32, wall_base_vertex),
-        .door_base_index = door_base_index,
-        .door_indices_count = door_indices.len,
-        .door_base_vertex = @intCast(i32, door_base_vertex),
-        .cube_base_index = cube_base_index,
-        .cube_indices_count = cube_indices.len,
-        .cube_base_vertex = @intCast(i32, cube_base_vertex),
-
         .view_bindings = view_bindings,
         .view_uniform_buffer = view_buffer,
         .held_object_bindings = held_object_bindings,
         .held_object_uniform_buffer = held_object_buffer,
 
         .instance_list = instance_list,
+
+        .meshes = undefined,
     };
+
+    app.meshes.init(core.device, core.device.getQueue());
 
     for (levels[0]) |room| app.map.append(gpa, room) catch unreachable;
     app.map.append(gpa, .{
@@ -606,21 +371,17 @@ pub fn update(app: *App, core: *mach.Core) !void {
     // Do the rendering
     pass.setPipeline(app.instanced_pipeline);
     pass.setBindGroup(0, app.view_bindings, &.{});
-    pass.setVertexBuffer(0, app.mesh_buffer, app.mesh_vertex_offset, app.mesh_vertex_size);
+    app.meshes.bind(pass, 0);
     pass.setVertexBuffer(1, app.instance_list, 0, app.total_instances * @sizeOf(InstanceAttrs));
-    pass.setIndexBuffer(app.mesh_buffer, .uint16, app.mesh_indices_offset, app.mesh_indices_size);
-    pass.drawIndexed(app.room_indices_count, app.num_visible_rooms, app.room_base_index, app.room_base_vertex, app.room_instance_offset);
-    pass.drawIndexed(app.wall_indices_count, app.num_visible_walls, app.wall_base_index, app.wall_base_vertex, app.wall_instance_offset);
-    pass.drawIndexed(app.door_indices_count, app.num_visible_doors, app.door_base_index, app.door_base_vertex, app.door_instance_offset);
-    pass.drawIndexed(app.cube_indices_count, app.num_visible_cubes, app.cube_base_index, app.cube_base_vertex, app.cube_instance_offset);
+    app.meshes.room.draw(pass, app.num_visible_rooms, app.room_instance_offset);
+    app.meshes.wall.draw(pass, app.num_visible_walls, app.wall_instance_offset);
+    app.meshes.door.draw(pass, app.num_visible_doors, app.door_instance_offset);
+    app.meshes.cube.draw(pass, app.num_visible_cubes, app.cube_instance_offset);
 
     if (app.held_cube != NO_ROOM) {
         pass.setPipeline(app.object_pipeline);
-        pass.setBindGroup(0, app.view_bindings, &.{});
         pass.setBindGroup(1, app.held_object_bindings, &.{});
-        pass.setVertexBuffer(0, app.mesh_buffer, app.mesh_vertex_offset, app.mesh_vertex_size);
-        pass.setIndexBuffer(app.mesh_buffer, .uint16, app.mesh_indices_offset, app.mesh_indices_size);
-        pass.drawIndexed(app.cube_indices_count, 1, app.cube_base_index, app.cube_base_vertex, 0);
+        app.meshes.cube.draw(pass, 1, 0);
     }
 
     // Finish up
@@ -733,7 +494,7 @@ fn updateSimulation(app: *App, raw_delta_time: f32) void {
     // Prevent giant timesteps from causing problems
     const delta_time = std.math.min(raw_delta_time, 0.2);
 
-    const move_speed: f32 = if (app.keys & Dir.shift != 0) run_speed else walk_speed;
+    const move_speed: f32 = if (app.keys & Dir.shift != 0) dims.run_speed else dims.walk_speed;
     const vec_move_speed = @splat(4, move_speed * delta_time);
 
     if (app.keys & Dir.right != 0) {
@@ -751,60 +512,60 @@ fn updateSimulation(app: *App, raw_delta_time: f32) void {
     const edges = &app.map.items(.edges)[app.current_room];
 
     // Check if the player is close to a wall.
-    if (app.player_pos[0] > room_width - collision_tolerance) {
+    if (app.player_pos[0] > dims.room_width - dims.collision_tolerance) {
         // Check if they are in the door area
-        if (abs(app.player_pos[2]) < door_width - collision_tolerance and
+        if (abs(app.player_pos[2]) < dims.door_width - dims.collision_tolerance and
             edges[app.current_rotation +% 0].to_room != NO_ROOM) {
             // In the door, check for transfer to next room
-            if (app.player_pos[0] > room_width + collision_tolerance) {
-                app.player_pos[0] -= 2 * room_width;
+            if (app.player_pos[0] > dims.room_width + dims.collision_tolerance) {
+                app.player_pos[0] -= 2 * dims.room_width;
                 app.moveCurrentRoom(0);
             }
         } else {
             // Too close to the wall but not in the door, clamp onto the wall
-            app.player_pos[0] = room_width - collision_tolerance;
+            app.player_pos[0] = dims.room_width - dims.collision_tolerance;
         }
     }
-    if (app.player_pos[2] < -room_width + collision_tolerance) {
+    if (app.player_pos[2] < -dims.room_width + dims.collision_tolerance) {
         // Check if they are in the door area
-        if (abs(app.player_pos[0]) < door_width - collision_tolerance and
+        if (abs(app.player_pos[0]) < dims.door_width - dims.collision_tolerance and
             edges[app.current_rotation +% 1].to_room != NO_ROOM) {
             // In the door, check for transfer to next room
-            if (app.player_pos[2] < -room_width - collision_tolerance) {
-                app.player_pos[2] += 2 * room_width;
+            if (app.player_pos[2] < -dims.room_width - dims.collision_tolerance) {
+                app.player_pos[2] += 2 * dims.room_width;
                 app.moveCurrentRoom(1);
             }
         } else {
             // Too close to the wall but not in the door, clamp onto the wall
-            app.player_pos[2] = -room_width + collision_tolerance;
+            app.player_pos[2] = -dims.room_width + dims.collision_tolerance;
         }
     }
-    if (app.player_pos[0] < -room_width + collision_tolerance) {
+    if (app.player_pos[0] < -dims.room_width + dims.collision_tolerance) {
         // Check if they are in the door area
-        if (abs(app.player_pos[2]) < door_width - collision_tolerance and
+        if (abs(app.player_pos[2]) < dims.door_width - dims.collision_tolerance and
             edges[app.current_rotation +% 2].to_room != NO_ROOM) {
             // In the door, check for transfer to next room
-            if (app.player_pos[0] < -room_width - collision_tolerance) {
-                app.player_pos[0] += 2 * room_width;
+            if (app.player_pos[0] < -dims.room_width - dims.collision_tolerance) {
+                app.player_pos[0] += 2 * dims.room_width;
                 app.moveCurrentRoom(2);
             }
         } else {
             // Too close to the wall but not in the door, clamp onto the wall
-            app.player_pos[0] = -room_width + collision_tolerance;
+            app.player_pos[0] = -dims.room_width + dims.collision_tolerance;
         }
     }
-    if (app.player_pos[2] > room_width - collision_tolerance) {
+    if (app.player_pos[2] > dims.room_width - dims.collision_tolerance) {
         // Check if they are in the door area
-        if (abs(app.player_pos[0]) < door_width - collision_tolerance and
+        if (abs(app.player_pos[0]) < dims.door_width - dims.collision_tolerance and
             edges[app.current_rotation +% 3].to_room != NO_ROOM) {
             // In the door, check for transfer to next room
-            if (app.player_pos[2] > room_width + collision_tolerance) {
-                app.player_pos[2] -= 2 * room_width;
+            if (app.player_pos[2] > dims.room_width + dims.collision_tolerance) {
+                app.player_pos[2] -= 2 * dims.room_width;
                 app.moveCurrentRoom(3);
             }
         } else {
             // Too close to the wall but not in the door, clamp onto the wall
-            app.player_pos[2] = room_width - collision_tolerance;
+            app.player_pos[2] = dims.room_width - dims.collision_tolerance;
         }
     }
 
@@ -953,7 +714,7 @@ fn updateHeldObjectUniforms(app: *App, queue: *gpu.Queue) void {
     const object_pos = app.player_pos
         + @splat(4, @as(f32, std.math.sqrt2 * 0.05)) * app.forward_dir
         + @splat(4, @as(f32, std.math.sqrt2 * 0.05)) * app.right_dir
-        + zm.f32x4(0, 0.18 - player_height, 0, 0);
+        + zm.f32x4(0, 0.18 - dims.player_height, 0, 0);
     const scale = Vec{ 0.7, 0.7, 0.7, 1.0 };        
     const uniforms = ObjectUniforms{
         .transform_0 = scale * Vec{ app.forward_dir[0], 0, app.right_dir[0], object_pos[0] },
