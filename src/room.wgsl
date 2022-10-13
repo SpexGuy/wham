@@ -83,6 +83,6 @@ fn frag_main(
   @builtin(position) device_pos : vec4<f32>,
   inputs: Interpolators,
 ) -> @location(0) vec4<f32> {
-  let brightness = 1.0 - smoothstep(-0.4, 3.0, inputs.depth);
+  let brightness = 1.0 - smoothstep(-0.8, 4.0, inputs.depth);
   return vec4<f32>(vec3<f32>(brightness) * inputs.color, 1.0);
 }

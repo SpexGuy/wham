@@ -1105,7 +1105,7 @@ const InstanceBuilder = struct {
         var rotation = app.current_rotation +% primary_dir;
 
         var i: u32 = 0;
-        while (i < 3) : (i += 1) {
+        while (i < 4) : (i += 1) {
             {
                 if (!b.addPassage(room, position, rotation, primary_dir, false)) break;
                 position[0] += primary_delta[0];
