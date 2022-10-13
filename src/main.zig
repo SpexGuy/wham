@@ -91,6 +91,8 @@ const MAX_WALLS = 20;
 const MAX_CUBES = MAX_ROOMS;
 const MAX_INSTANCES = MAX_ROOMS + MAX_WALLS + MAX_DOORS + MAX_CUBES;
 
+const MSAA_COUNT = 4;
+
 const InstanceAttrs = extern struct {
     translation: [2]f32,
     rotation: u32,
@@ -117,8 +119,6 @@ pub const RoomType = enum {
 };
 
 pub fn init(app: *App, core: *mach.Core) !void {
-
-
     const instance_list = core.device.createBuffer(&gpu.Buffer.Descriptor{
         .label = "instance_list",
         .usage = .{ .copy_dst = true, .vertex = true },
@@ -241,6 +241,9 @@ pub fn init(app: *App, core: *mach.Core) !void {
             .cull_mode = .back,
             .topology = .triangle_list,
         },
+        .multisample = .{
+            .count = MSAA_COUNT,
+        },
     });
 
     const object_pipeline = core.device.createRenderPipeline(&gpu.RenderPipeline.Descriptor{
@@ -279,6 +282,9 @@ pub fn init(app: *App, core: *mach.Core) !void {
         .primitive = .{
             .cull_mode = .back,
             .topology = .triangle_list,
+        },
+        .multisample = .{
+            .count = MSAA_COUNT,
         },
     });
 
@@ -332,10 +338,28 @@ pub fn update(app: *App, core: *mach.Core) !void {
 
     // Prepare to render the frame
     // TODO cache the depth buffer
+    // Unfortunately, webgpu doesn't have memoryless textures.
+    // So we're stuck allocating big MSAA backing memory that will never be used :(
+    const color_msaa_texture = core.device.createTexture(&gpu.Texture.Descriptor{
+        .size = .{ .width = size.width, .height = size.height },
+        .format = core.swap_chain_format,
+        .sample_count = MSAA_COUNT,
+        .usage = .{ .render_attachment = true },
+    });
+    defer color_msaa_texture.release();
+
+    const color_msaa_view = color_msaa_texture.createView(&gpu.TextureView.Descriptor{
+        .dimension = .dimension_2d,
+        .array_layer_count = 1,
+        .mip_level_count = 1,
+    });
+    defer color_msaa_view.release();
+
     const depth_texture = core.device.createTexture(&gpu.Texture.Descriptor{
         .size = .{ .width = size.width, .height = size.height },
         .format = .depth32_float,
-        .usage = .{ .render_attachment = true, .texture_binding = true },
+        .sample_count = MSAA_COUNT,
+        .usage = .{ .render_attachment = true },
     });
     defer depth_texture.release();
 
@@ -354,7 +378,8 @@ pub fn update(app: *App, core: *mach.Core) !void {
 
     const pass = cb.beginRenderPass(&gpu.RenderPassDescriptor.init(.{
         .color_attachments = &[_]gpu.RenderPassColorAttachment{ .{
-            .view = back_buffer_view,
+            .view = color_msaa_view,
+            .resolve_target = back_buffer_view,
             .clear_value = gpu.Color{ .r = 0.2, .g = 0.2, .b = 0.2, .a = 1.0 },
             .load_op = .clear,
             .store_op = .store,
