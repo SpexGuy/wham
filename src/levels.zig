@@ -23,6 +23,62 @@ const level_0 = [_]Room{
     .{
         .color = red,
         .edges = .{
+            .{ .to_room = 1, .in_dir = 0 },
+            .{ .to_room = 0, .in_dir = 1 },
+            .{ .to_room = 1, .in_dir = 2 },
+            .{ .to_room = 0, .in_dir = 3 },
+        },
+        .cube = 1,
+    },
+    .{
+        .color = teal,
+        .edges = .{
+            .{ .to_room = 0, .in_dir = 0 },
+            .{ .to_room = 1, .in_dir = 1 },
+            .{ .to_room = 0, .in_dir = 2 },
+            .{ .to_room = 1, .in_dir = 3 },
+        },
+        .cube = 0,
+    },
+};
+
+const level_1 = [_]Room{
+    .{
+        .color = red,
+        .edges = .{
+            .{ .to_room = 0, .in_dir = 2 },
+            .{ .to_room = 1, .in_dir = 0 },
+            .{ .to_room = 2, .in_dir = 3 },
+            .{ .to_room = NO_ROOM, .in_dir = 0 },
+        },
+        .cube = 1,
+    },
+    .{
+        .color = green,
+        .edges = .{
+            .{ .to_room = 1, .in_dir = 2 },
+            .{ .to_room = 2, .in_dir = 0 },
+            .{ .to_room = 0, .in_dir = 3 },
+            .{ .to_room = NO_ROOM, .in_dir = 0 },
+        },
+        .cube = 2,
+    },
+    .{
+        .color = blue,
+        .edges = .{
+            .{ .to_room = 2, .in_dir = 2 },
+            .{ .to_room = 0, .in_dir = 0 },
+            .{ .to_room = 1, .in_dir = 3 },
+            .{ .to_room = NO_ROOM, .in_dir = 0 },
+        },
+        .cube = 0,
+    },
+};
+
+const level_4 = [_]Room{
+    .{
+        .color = red,
+        .edges = .{
             .{ .to_room = NO_ROOM, .in_dir = 0 },
             .{ .to_room = 0, .in_dir = 1 },
             .{ .to_room = 2, .in_dir = 2 },
@@ -62,7 +118,7 @@ const level_0 = [_]Room{
     },
 };
 
-const level_1 = [_]Room{
+const level_3 = [_]Room{
     .{
         .color = purple,
         .edges = .{
@@ -115,7 +171,7 @@ const level_1 = [_]Room{
     },
 };
 
-const level_2 = [_]Room{
+const level_5 = [_]Room{
     .{
         .color = teal,
         .edges = .{
@@ -198,7 +254,7 @@ const level_2 = [_]Room{
     },
 };
 
-const level_3 = [_]Room{
+const level_2 = [_]Room{
     .{
         .color = red,
         .edges = .{
@@ -242,8 +298,10 @@ const level_3 = [_]Room{
 };
 
 pub const levels: []const []const Room = &[_][]const Room {
-    &level_3,
-    &level_1,
     &level_0,
+    &level_1,
     &level_2,
+    &level_3,
+    &level_4,
+    &level_5,
 };
