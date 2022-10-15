@@ -26,6 +26,10 @@ const ObjectUniforms = extern struct {
     color: Vec,
 };
 
+const PostProcessUniforms = extern struct {
+    colorblind_mode: u32,
+};
+
 const gpa = std.heap.c_allocator;
 
 meshes: StaticMeshes,
@@ -34,9 +38,12 @@ view_uniform_buffer: *gpu.Buffer,
 view_bindings: *gpu.BindGroup,
 held_object_uniform_buffer: *gpu.Buffer,
 held_object_bindings: *gpu.BindGroup,
+post_process_uniform_buffer: *gpu.Buffer,
+post_process_bindings_layout: *gpu.BindGroupLayout,
 
 instanced_pipeline: *gpu.RenderPipeline,
 object_pipeline: *gpu.RenderPipeline,
+post_process_pipeline: *gpu.RenderPipeline,
 
 instance_list: *gpu.Buffer,
 keys: u8 = 0,
@@ -49,6 +56,13 @@ last_mouse_x: f32 = 0,
 last_mouse_y: f32 = 0,
 
 pending_grab_block: bool = false,
+pending_colorblind_change: i32 = 0,
+
+// 0: none,
+// 1: simulate no red cones
+// 2: simulate no green cones
+// 3: simulate no blue cones
+colorblind_mode: u2 = 0,
 
 room_instance_offset: u32 = 0,
 num_visible_rooms: u32 = 0,
@@ -138,6 +152,12 @@ pub fn init(app: *App, core: *mach.Core) !void {
         .size = @sizeOf(ObjectUniforms),
     });
 
+    const post_process_buffer = core.device.createBuffer(&gpu.Buffer.Descriptor{
+        .label = "post_process_buffer",
+        .usage = .{ .uniform = true, .copy_dst = true },
+        .size = @sizeOf(PostProcessUniforms),
+    });
+
     const view_bindings_layout = core.device.createBindGroupLayout(&gpu.BindGroupLayout.Descriptor.init(.{
         .entries = &.{
             gpu.BindGroupLayout.Entry.buffer(0, .{ .vertex = true, .fragment = true }, .uniform, false, @sizeOf(ViewUniforms)),
@@ -146,7 +166,14 @@ pub fn init(app: *App, core: *mach.Core) !void {
     
     const object_bindings_layout = core.device.createBindGroupLayout(&gpu.BindGroupLayout.Descriptor.init(.{
         .entries = &.{
-            gpu.BindGroupLayout.Entry.buffer(0, .{ .vertex = true, .fragment = false }, .uniform, false, @sizeOf(ObjectUniforms)),
+            gpu.BindGroupLayout.Entry.buffer(0, .{ .vertex = true }, .uniform, false, @sizeOf(ObjectUniforms)),
+        },
+    }));
+
+    const post_process_bindings_layout = core.device.createBindGroupLayout(&gpu.BindGroupLayout.Descriptor.init(.{
+        .entries = &.{
+            gpu.BindGroupLayout.Entry.buffer(0, .{ .fragment = true }, .uniform, false, @sizeOf(PostProcessUniforms)),
+            gpu.BindGroupLayout.Entry.texture(1, .{ .fragment = true }, .float, .dimension_2d, false),
         },
     }));
 
@@ -166,6 +193,7 @@ pub fn init(app: *App, core: *mach.Core) !void {
     }));
 
     const room_shader_module = core.device.createShaderModuleWGSL("room.wgsl", @embedFile("room.wgsl"));
+    const post_process_shader_module = core.device.createShaderModuleWGSL("post_process.wgsl", @embedFile("post_process.wgsl"));
 
     const instanced_layout = core.device.createPipelineLayout(&gpu.PipelineLayout.Descriptor.init(.{
         .bind_group_layouts = &.{
@@ -177,6 +205,12 @@ pub fn init(app: *App, core: *mach.Core) !void {
         .bind_group_layouts = &.{
             view_bindings_layout,
             object_bindings_layout,
+        },
+    }));
+
+    const post_process_layout = core.device.createPipelineLayout(&gpu.PipelineLayout.Descriptor.init(.{
+        .bind_group_layouts = &.{
+            post_process_bindings_layout,
         },
     }));
 
@@ -289,14 +323,36 @@ pub fn init(app: *App, core: *mach.Core) !void {
         },
     });
 
+    const post_process_pipeline = core.device.createRenderPipeline(&gpu.RenderPipeline.Descriptor{
+        .layout = post_process_layout,
+        .vertex = gpu.VertexState.init(.{
+            .module = post_process_shader_module,
+            .entry_point = "vert_main",
+        }),
+        .fragment = &gpu.FragmentState.init(.{
+            .module = post_process_shader_module,
+            .entry_point = "frag_main",
+            .targets = &[_]gpu.ColorTargetState{.{
+                .format = core.swap_chain_format,
+            }},
+        }),
+        .primitive = .{
+            .cull_mode = .none,
+            .topology = .triangle_list,
+        },
+    });
+
     app.* = .{
         .instanced_pipeline = instanced_pipeline,
         .object_pipeline = object_pipeline,
+        .post_process_pipeline = post_process_pipeline,
 
         .view_bindings = view_bindings,
         .view_uniform_buffer = view_buffer,
         .held_object_bindings = held_object_bindings,
         .held_object_uniform_buffer = held_object_buffer,
+        .post_process_bindings_layout = post_process_bindings_layout,
+        .post_process_uniform_buffer = post_process_buffer,
 
         .instance_list = instance_list,
 
@@ -375,12 +431,17 @@ pub fn update(app: *App, core: *mach.Core) !void {
     app.updateInputState(core);
     app.updateSimulation(core.delta_time);
 
+    const use_post_process = app.colorblind_mode != 0;
+
     // Update gpu state
     const queue = core.device.getQueue();
     const size = core.getFramebufferSize();
     app.updateViewUniforms(queue, size);
     if (app.held_cube != NO_ROOM) {
         app.updateHeldObjectUniforms(queue);
+    }
+    if (use_post_process) {
+        app.updatePostProcessUniforms(queue);
     }
 
     app.updateInstances(queue);
@@ -419,47 +480,99 @@ pub fn update(app: *App, core: *mach.Core) !void {
     });
     defer depth_view.release();
 
+    var color_resolve_buffer: ?*gpu.Texture = null;
+    defer if (color_resolve_buffer) |r| r.release();
+    var color_resolve_view: ?*gpu.TextureView = null;
+    defer if (color_resolve_view) |v| v.release();
+
+    var post_bind_group: ?*gpu.BindGroup = null;
+    defer if (post_bind_group) |b| b.release();
+
+    if (use_post_process) {
+        color_resolve_buffer = core.device.createTexture(&gpu.Texture.Descriptor{
+            .size = .{ .width = size.width, .height = size.height },
+            .format = core.swap_chain_format,
+            .usage = .{ .render_attachment = true, .texture_binding = true },
+        });
+
+        color_resolve_view = color_resolve_buffer.?.createView(&gpu.TextureView.Descriptor{
+            .dimension = .dimension_2d,
+            .array_layer_count = 1,
+            .mip_level_count = 1,
+        });
+
+        post_bind_group = core.device.createBindGroup(&gpu.BindGroup.Descriptor.init(.{
+            .label = "post_process_bind_group",
+            .layout = app.post_process_bindings_layout,
+            .entries = &[_]gpu.BindGroup.Entry{
+                gpu.BindGroup.Entry.buffer(0, app.post_process_uniform_buffer, 0, @sizeOf(PostProcessUniforms)),
+                gpu.BindGroup.Entry.textureView(1, color_resolve_view.?),
+            },
+        }));
+    }
+
     const back_buffer_view = core.swap_chain.?.getCurrentTextureView();
     defer back_buffer_view.release();
 
     const cb = core.device.createCommandEncoder(null);
     defer cb.release();
 
-    const pass = cb.beginRenderPass(&gpu.RenderPassDescriptor.init(.{
-        .color_attachments = &[_]gpu.RenderPassColorAttachment{ .{
-            .view = color_msaa_view,
-            .resolve_target = back_buffer_view,
-            .clear_value = gpu.Color{ .r = 0.2, .g = 0.2, .b = 0.2, .a = 1.0 },
-            .load_op = .clear,
-            .store_op = .store,
-        } },
-        .depth_stencil_attachment = &.{
-            .view = depth_view,
-            .depth_load_op = .clear,
-            .depth_store_op = .store,
-            .depth_clear_value = 1.0,
-        },
-    }));
-    defer pass.release();
+    // Main pass
+    {
+        const pass = cb.beginRenderPass(&gpu.RenderPassDescriptor.init(.{
+            .color_attachments = &[_]gpu.RenderPassColorAttachment{ .{
+                .view = color_msaa_view,
+                .resolve_target = if (use_post_process) color_resolve_view.? else back_buffer_view,
+                .clear_value = gpu.Color{ .r = 0.2, .g = 0.2, .b = 0.2, .a = 1.0 },
+                .load_op = .clear,
+                .store_op = .store, // discard the msaa target, the resolve still happens
+            } },
+            .depth_stencil_attachment = &.{
+                .view = depth_view,
+                .depth_load_op = .clear,
+                .depth_store_op = .discard, // no need for depth in post pass (yet)
+                .depth_clear_value = 1.0,
+            },
+        }));
+        defer pass.release();
 
-    // Do the rendering
-    pass.setPipeline(app.instanced_pipeline);
-    pass.setBindGroup(0, app.view_bindings, &.{});
-    app.meshes.bind(pass, 0);
-    pass.setVertexBuffer(1, app.instance_list, 0, app.total_instances * @sizeOf(InstanceAttrs));
-    app.meshes.room.draw(pass, app.num_visible_rooms, app.room_instance_offset);
-    app.meshes.wall.draw(pass, app.num_visible_walls, app.wall_instance_offset);
-    app.meshes.door.draw(pass, app.num_visible_doors, app.door_instance_offset);
-    app.meshes.cube.draw(pass, app.num_visible_cubes, app.cube_instance_offset);
+        // Do the rendering
+        pass.setPipeline(app.instanced_pipeline);
+        pass.setBindGroup(0, app.view_bindings, &.{});
+        app.meshes.bind(pass, 0);
+        pass.setVertexBuffer(1, app.instance_list, 0, app.total_instances * @sizeOf(InstanceAttrs));
+        app.meshes.room.draw(pass, app.num_visible_rooms, app.room_instance_offset);
+        app.meshes.wall.draw(pass, app.num_visible_walls, app.wall_instance_offset);
+        app.meshes.door.draw(pass, app.num_visible_doors, app.door_instance_offset);
+        app.meshes.cube.draw(pass, app.num_visible_cubes, app.cube_instance_offset);
 
-    if (app.held_cube != NO_ROOM) {
-        pass.setPipeline(app.object_pipeline);
-        pass.setBindGroup(1, app.held_object_bindings, &.{});
-        app.meshes.cube.draw(pass, 1, 0);
+        if (app.held_cube != NO_ROOM) {
+            pass.setPipeline(app.object_pipeline);
+            pass.setBindGroup(1, app.held_object_bindings, &.{});
+            app.meshes.cube.draw(pass, 1, 0);
+        }
+
+        // Finish up
+        pass.end();
     }
 
-    // Finish up
-    pass.end();
+    if (use_post_process) {
+        const pass = cb.beginRenderPass(&gpu.RenderPassDescriptor.init(.{
+            .color_attachments = &[_]gpu.RenderPassColorAttachment{ .{
+                .view = back_buffer_view,
+                .clear_value = gpu.Color{ .r = 0.0, .g = 1.0, .b = 0.0, .a = 1.0 },
+                .load_op = .clear, // apparently .undef is different from dont_care?  This is unfortunate, may need to use compute + UAV instead.
+                .store_op = .store,
+            } },
+        }));
+        defer pass.release();
+
+        pass.setPipeline(app.post_process_pipeline);
+        pass.setBindGroup(0, post_bind_group.?, &.{});
+        pass.draw(3, 1, 0, 0); // vertex_count, instance_count, first_vertex, first_instance
+
+        pass.end();
+    }
 
     var command = cb.finish(null);
     defer command.release();
@@ -500,6 +613,12 @@ fn updateInputState(app: *App, core: *mach.Core) void {
                 },
                 .left_shift => {
                     app.keys |= Dir.shift;
+                },
+                .o => {
+                    app.pending_colorblind_change = -1;
+                },
+                .p => {
+                    app.pending_colorblind_change = 1;
                 },
                 else => {},
             },
@@ -581,6 +700,11 @@ fn updateSimulation(app: *App, raw_delta_time: f32) void {
         app.player_pos += app.forward_dir * vec_move_speed;
     } else if (app.keys & Dir.down != 0) {
         app.player_pos -= app.forward_dir * vec_move_speed;
+    }
+
+    if (app.pending_colorblind_change != 0) {
+        app.colorblind_mode = app.colorblind_mode +% @truncate(u2, @bitCast(u32, app.pending_colorblind_change));
+        app.pending_colorblind_change = 0;
     }
 
     const edges = &app.map.items(.edges)[app.current_room];
@@ -784,6 +908,13 @@ fn updateHeldObjectUniforms(app: *App, queue: *gpu.Queue) void {
         .color = colorToVec(app.map.items(.color)[app.held_cube]),
     };
     queue.writeBuffer(app.held_object_uniform_buffer, 0, std.mem.asBytes(&uniforms));
+}
+
+fn updatePostProcessUniforms(app: *App, queue: *gpu.Queue) void {
+    const uniforms = PostProcessUniforms{
+        .colorblind_mode = app.colorblind_mode,
+    };
+    queue.writeBuffer(app.post_process_uniform_buffer, 0, std.mem.asBytes(&uniforms));
 }
 
 fn colorToVec(color: u32) Vec {
