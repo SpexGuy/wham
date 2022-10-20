@@ -2,26 +2,50 @@ const main = @import("main.zig");
 const Room = main.Room;
 const NO_ROOM = main.NO_ROOM;
 
-const blue = 0xFFFF0000;
-const red = 0xFF0000FF;
-const green = 0xFF00FF00;
-const yellow = 0xFF00FFFF;
+const high_contrast = [3]u32{
+    0xFF33AADD, // yellow
+    0xFF6655BB, // red
+    0xFF884400, // blue
+};
 
-const magenta = 0xFFFF00FF;
-const purple = 0xFFFF007f;
-const orange = 0xFF007FFF;
-const seafoam = 0xFF7FFF00;
+const bright = [6]u32{
+    0xFFAA7744, // blue
+    0xFFEECC66, // cyan
+    0xFF338822, // green
+    0xFF44BBCC, // yellow
+    0xFF7766EE, // red
+    0xFF7733AA, // purple
+};
 
-const teal = 0xFFFF7F00;
-const mustard = 0xFF00FF7F;
-const pink = 0xFF7F00FF;
+const vibrant = [6]u32{
+    0xFFBB7700, // blue
+    0xFFEEBB33, // cyan
+    0xFF889900, // teal
+    0xFF3377EE, // orange
+    0xFF1133CC, // red
+    0xFF7733EE, // magenta
+};
 
-const cyan = 0xFFFFFF00;
-const forest_green = 0xFF228B22;
+const muted = [9]u32{
+    0xFF882233, // indigo
+    0xFFEECC88, // cyan
+    0xFF99AA44, // teal
+    0xFF337711, // green
+    0xFF339999, // olive
+    0xFF77CCDD, // sand
+    0xFF7766CC, // rose
+    0xFF552288, // wine
+    0xFF9944AA, // purple
+};
 
+
+const l0_colors = [2]u32{
+    high_contrast[1],
+    high_contrast[2],
+};
 const level_0 = [_]Room{
     .{
-        .color = red,
+        .color = l0_colors[0],
         .edges = .{
             .{ .to_room = 1, .in_dir = 0 },
             .{ .to_room = 0, .in_dir = 1 },
@@ -31,7 +55,7 @@ const level_0 = [_]Room{
         .cube = 1,
     },
     .{
-        .color = teal,
+        .color = l0_colors[1],
         .edges = .{
             .{ .to_room = 0, .in_dir = 0 },
             .{ .to_room = 1, .in_dir = 1 },
@@ -42,9 +66,10 @@ const level_0 = [_]Room{
     },
 };
 
+const l1_colors = high_contrast;
 const level_1 = [_]Room{
     .{
-        .color = red,
+        .color = l1_colors[0],
         .edges = .{
             .{ .to_room = 0, .in_dir = 2 },
             .{ .to_room = 1, .in_dir = 0 },
@@ -54,7 +79,7 @@ const level_1 = [_]Room{
         .cube = 1,
     },
     .{
-        .color = green,
+        .color = l1_colors[1],
         .edges = .{
             .{ .to_room = 1, .in_dir = 2 },
             .{ .to_room = 2, .in_dir = 0 },
@@ -64,7 +89,7 @@ const level_1 = [_]Room{
         .cube = 2,
     },
     .{
-        .color = blue,
+        .color = l1_colors[2],
         .edges = .{
             .{ .to_room = 2, .in_dir = 2 },
             .{ .to_room = 0, .in_dir = 0 },
@@ -75,9 +100,10 @@ const level_1 = [_]Room{
     },
 };
 
+const l4_colors = bright[0..4];
 const level_4 = [_]Room{
     .{
-        .color = red,
+        .color = l4_colors[0],
         .edges = .{
             .{ .to_room = NO_ROOM, .in_dir = 0 },
             .{ .to_room = 0, .in_dir = 1 },
@@ -87,7 +113,7 @@ const level_4 = [_]Room{
         .cube = 1,
     },
     .{
-        .color = yellow,
+        .color = l4_colors[1],
         .edges = .{
             .{ .to_room = 2, .in_dir = 0 },
             .{ .to_room = 1, .in_dir = 1 },
@@ -97,7 +123,7 @@ const level_4 = [_]Room{
         .cube = 2,
     },
     .{
-        .color = green,
+        .color = l4_colors[2],
         .edges = .{
             .{ .to_room = 3, .in_dir = 0 },
             .{ .to_room = 2, .in_dir = 1 },
@@ -107,7 +133,7 @@ const level_4 = [_]Room{
         .cube = 3,
     },
     .{
-        .color = blue,
+        .color = l4_colors[3],
         .edges = .{
             .{ .to_room = 0, .in_dir = 0 },
             .{ .to_room = 3, .in_dir = 1 },
@@ -118,9 +144,10 @@ const level_4 = [_]Room{
     },
 };
 
+const l3_colors = vibrant[0..5];
 const level_3 = [_]Room{
     .{
-        .color = purple,
+        .color = l3_colors[0],
         .edges = .{
             .{ .to_room = 0, .in_dir = 0 },
             .{ .to_room = 0, .in_dir = 3 },
@@ -130,7 +157,7 @@ const level_3 = [_]Room{
         .cube = 1,
     },
     .{
-        .color = orange,
+        .color = l3_colors[1],
         .edges = .{
             .{ .to_room = NO_ROOM, .in_dir = 0 },
             .{ .to_room = NO_ROOM, .in_dir = 0 },
@@ -140,7 +167,7 @@ const level_3 = [_]Room{
         .cube = 2,
     },
     .{
-        .color = seafoam,
+        .color = l3_colors[2],
         .edges = .{
             .{ .to_room = 3, .in_dir = 0 },
             .{ .to_room = 0, .in_dir = 1 },
@@ -150,7 +177,7 @@ const level_3 = [_]Room{
         .cube = 3,
     },
     .{
-        .color = magenta,
+        .color = l3_colors[3],
         .edges = .{
             .{ .to_room = NO_ROOM, .in_dir = 0 },
             .{ .to_room = NO_ROOM, .in_dir = 0 },
@@ -160,7 +187,7 @@ const level_3 = [_]Room{
         .cube = 4,
     },
     .{
-        .color = blue,
+        .color = l3_colors[4],
         .edges = .{
             .{ .to_room = 0, .in_dir = 2 },
             .{ .to_room = NO_ROOM, .in_dir = 0 },
@@ -171,9 +198,10 @@ const level_3 = [_]Room{
     },
 };
 
+const l5_colors = muted[0..4] ++ muted[5..9];
 const level_5 = [_]Room{
     .{
-        .color = teal,
+        .color = l5_colors[0],
         .edges = .{
             .{ .to_room = 1, .in_dir = 2 },
             .{ .to_room = 4, .in_dir = 2 },
@@ -183,7 +211,7 @@ const level_5 = [_]Room{
         .cube = 1,
     },
     .{
-        .color = mustard,
+        .color = l5_colors[1],
         .edges = .{
             .{ .to_room = 0, .in_dir = 2 },
             .{ .to_room = 2, .in_dir = 1 },
@@ -193,7 +221,7 @@ const level_5 = [_]Room{
         .cube = 2,
     },
     .{
-        .color = pink,
+        .color = l5_colors[2],
         .edges = .{
             .{ .to_room = 5, .in_dir = 2 },
             .{ .to_room = 1, .in_dir = 3 },
@@ -203,7 +231,7 @@ const level_5 = [_]Room{
         .cube = 3,
     },
     .{
-        .color = red,
+        .color = l5_colors[3],
         .edges = .{
             .{ .to_room = NO_ROOM, .in_dir = 0 },
             .{ .to_room = 6, .in_dir = 2 },
@@ -213,7 +241,7 @@ const level_5 = [_]Room{
         .cube = 4,
     },
     .{
-        .color = forest_green,
+        .color = l5_colors[4],
         .edges = .{
             .{ .to_room = 1, .in_dir = 0 },
             .{ .to_room = NO_ROOM, .in_dir = 0 },
@@ -223,7 +251,7 @@ const level_5 = [_]Room{
         .cube = 5,
     },
     .{
-        .color = yellow,
+        .color = l5_colors[5],
         .edges = .{
             .{ .to_room = 4, .in_dir = 0 },
             .{ .to_room = NO_ROOM, .in_dir = 0 },
@@ -233,7 +261,7 @@ const level_5 = [_]Room{
         .cube = 6,
     },
     .{
-        .color = cyan,
+        .color = l5_colors[6],
         .edges = .{
             .{ .to_room = 1, .in_dir = 3 },
             .{ .to_room = NO_ROOM, .in_dir = 0 },
@@ -243,7 +271,7 @@ const level_5 = [_]Room{
         .cube = 7,
     },
     .{
-        .color = orange,
+        .color = l5_colors[7],
         .edges = .{
             .{ .to_room = 4, .in_dir = 2 },
             .{ .to_room = 3, .in_dir = 3 },
@@ -254,9 +282,15 @@ const level_5 = [_]Room{
     },
 };
 
+const l2_colors = [4]u32{
+    bright[0],
+    bright[2],
+    bright[4],
+    bright[5],
+};
 const level_2 = [_]Room{
     .{
-        .color = red,
+        .color = l2_colors[0],
         .edges = .{
             .{ .to_room = 3, .in_dir = 0 },
             .{ .to_room = 3, .in_dir = 0 },
@@ -266,7 +300,7 @@ const level_2 = [_]Room{
         .cube = 1,
     },
     .{
-        .color = green,
+        .color = l2_colors[1],
         .edges = .{
             .{ .to_room = 0, .in_dir = 0 },
             .{ .to_room = 2, .in_dir = 2 },
@@ -276,7 +310,7 @@ const level_2 = [_]Room{
         .cube = 2,
     },
     .{
-        .color = blue,
+        .color = l2_colors[2],
         .edges = .{
             .{ .to_room = 0, .in_dir = 2 },
             .{ .to_room = 0, .in_dir = 1 },
@@ -286,7 +320,7 @@ const level_2 = [_]Room{
         .cube = 3,
     },
     .{
-        .color = yellow,
+        .color = l2_colors[3],
         .edges = .{
             .{ .to_room = 1, .in_dir = 3 },
             .{ .to_room = 3, .in_dir = 2 },

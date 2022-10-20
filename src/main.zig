@@ -27,7 +27,10 @@ const ObjectUniforms = extern struct {
 };
 
 const PostProcessUniforms = extern struct {
-    colorblind_mode: u32,
+    color_rotation_0: Vec,
+    color_rotation_1: Vec,
+    color_rotation_2: Vec,
+    colorblind_mode: u32 align(16),
 };
 
 const gpa = std.heap.c_allocator;
@@ -57,12 +60,18 @@ last_mouse_y: f32 = 0,
 
 pending_grab_block: bool = false,
 pending_colorblind_change: i32 = 0,
+pending_color_rotation: bool = false,
 
 // 0: none,
 // 1: simulate no red cones
 // 2: simulate no green cones
 // 3: simulate no blue cones
 colorblind_mode: u2 = 0,
+// 0: rgb,
+// 1: gbr,
+// 2: brg,
+target_color_rotation: u2 = 0,
+actual_color_rotation: f32 = 0,
 
 room_instance_offset: u32 = 0,
 num_visible_rooms: u32 = 0,
@@ -89,6 +98,7 @@ right_dir: Vec = zm.f32x4(0,1,0,0),
 player_pos: Vec = zm.f32x4(0,dims.player_height,0,0),
 
 current_level: usize = 0,
+level_rotates_colors: bool = false,
 map: std.MultiArrayList(Room) = .{},
 
 const Dir = struct {
@@ -367,6 +377,7 @@ pub fn init(app: *App, core: *mach.Core) !void {
 pub fn deinit(_: *App, _: *mach.Core) void {}
 
 fn loadLevelSelect(app: *App) void {
+    app.level_rotates_colors = false;
     app.map.shrinkRetainingCapacity(0);
     var total_len = levels.len; // select rooms
     for (levels) |l| total_len += l.len; // level rooms
@@ -419,6 +430,7 @@ fn loadLevelSelect(app: *App) void {
 }
 
 fn loadLevel(app: *App, index: usize) void {
+    app.level_rotates_colors = index >= 3;
     app.map.shrinkRetainingCapacity(0);
     app.map.ensureTotalCapacity(gpa, levels[index].len) catch @panic("Out of memory!");
     for (levels[index]) |room| app.map.appendAssumeCapacity(room);
@@ -431,7 +443,7 @@ pub fn update(app: *App, core: *mach.Core) !void {
     app.updateInputState(core);
     app.updateSimulation(core.delta_time);
 
-    const use_post_process = app.colorblind_mode != 0;
+    const use_post_process = true;
 
     // Update gpu state
     const queue = core.device.getQueue();
@@ -620,6 +632,9 @@ fn updateInputState(app: *App, core: *mach.Core) void {
                 .p => {
                     app.pending_colorblind_change = 1;
                 },
+                .f => {
+                    app.pending_color_rotation = true;
+                },
                 else => {},
             },
             .key_release => |ev| switch (ev.key) {
@@ -795,6 +810,9 @@ fn updateSimulation(app: *App, raw_delta_time: f32) void {
         // Make sure we are in a normal room
         if (app.map.items(.type)[app.current_room] == .normal)
         {
+            if (app.level_rotates_colors) {
+                app.pending_color_rotation = true;
+            }
             // Swap our cube with the one in this room
             const room_cube = &app.map.items(.cube)[app.current_room];
             const tmp = app.held_cube;
@@ -805,6 +823,22 @@ fn updateSimulation(app: *App, raw_delta_time: f32) void {
                 should_check_solved = true;
         }
     }
+
+    if (app.pending_color_rotation) {
+        app.target_color_rotation += 1;
+        if (app.target_color_rotation == 3) app.target_color_rotation = 0;
+        std.debug.print("Color rotation: {}\n", .{app.target_color_rotation});
+        app.pending_color_rotation = false;
+    }
+
+    var target_color_rotation_f32 = @intToFloat(f32, app.target_color_rotation);
+    var distance = target_color_rotation_f32 - app.actual_color_rotation;
+    if (distance < 0) distance += 3.0;
+    const rotation_speed = 3.0;
+    distance = std.math.min(distance, rotation_speed * raw_delta_time);
+    app.actual_color_rotation += distance;
+    // app.actual_color_rotation += delta_time * 0.3;
+    if (app.actual_color_rotation >= 3.0) app.actual_color_rotation -= 3.0;
 
     if (should_check_solved and app.isGameSolved()) {
         // transition to the "solved" state
@@ -911,7 +945,13 @@ fn updateHeldObjectUniforms(app: *App, queue: *gpu.Queue) void {
 }
 
 fn updatePostProcessUniforms(app: *App, queue: *gpu.Queue) void {
+    const axis = zm.normalize3(Vec{ 1.0, 1.0, 1.0, 0.0 });
+    const angle = app.actual_color_rotation * 0.333333 * std.math.tau;
+    const mat = zm.matFromNormAxisAngle(axis, angle);
     const uniforms = PostProcessUniforms{
+        .color_rotation_0 = mat[0],
+        .color_rotation_1 = mat[1],
+        .color_rotation_2 = mat[2],
         .colorblind_mode = app.colorblind_mode,
     };
     queue.writeBuffer(app.post_process_uniform_buffer, 0, std.mem.asBytes(&uniforms));

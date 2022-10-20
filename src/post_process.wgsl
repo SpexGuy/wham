@@ -1,4 +1,5 @@
 struct PostProcessUniforms {
+  color_rotation: mat3x3<f32>,
   colorblind_mode: u32,
 }
 
@@ -50,7 +51,7 @@ const deuteranopiaLms = mat3x3(
 const tritanopiaLms = mat3x3(
   1, 0, 0,
   0, 1, 0,
-  -0.3959, 0.8011, 0,
+  -0.03959, 0.08011, 0,
 );
 
 @fragment
@@ -63,12 +64,14 @@ fn frag_main(
 
     let base_color = textureLoad(resolved_color, vec2<i32>(device_pos.xy), 0);
     var adjusted = base_color.rgb;
+    adjusted = uniforms.color_rotation * adjusted;
+
     if (uniforms.colorblind_mode == 1) {
-        adjusted = base_color.rgb * protanopia;
+        adjusted = adjusted * protanopia;
     } else if (uniforms.colorblind_mode == 2) {
-        adjusted = base_color.rgb * deuteranopia;
+        adjusted = adjusted * deuteranopia;
     } else if (uniforms.colorblind_mode == 3) {
-        adjusted = base_color.rgb * tritanopia;
+        adjusted = adjusted * tritanopia;
     }
     return vec4<f32>(adjusted, base_color.a);
 }
