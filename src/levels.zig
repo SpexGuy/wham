@@ -76,7 +76,7 @@ const level_1 = [_]Room{
             .{ .to_room = 2, .in_dir = 3 },
             .{ .to_room = NO_ROOM, .in_dir = 0 },
         },
-        .cube = 1,
+        .cube = 2,
     },
     .{
         .color = l1_colors[1],
@@ -86,7 +86,7 @@ const level_1 = [_]Room{
             .{ .to_room = 0, .in_dir = 3 },
             .{ .to_room = NO_ROOM, .in_dir = 0 },
         },
-        .cube = 2,
+        .cube = 0,
     },
     .{
         .color = l1_colors[2],
@@ -96,7 +96,7 @@ const level_1 = [_]Room{
             .{ .to_room = 1, .in_dir = 3 },
             .{ .to_room = NO_ROOM, .in_dir = 0 },
         },
-        .cube = 0,
+        .cube = 1,
     },
 };
 

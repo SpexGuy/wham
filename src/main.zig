@@ -6,6 +6,8 @@ const levels = @import("levels.zig").levels;
 const dims = @import("dimensions.zig");
 const StaticMeshes = @import("StaticMeshes.zig");
 
+const allow_debug_commands = false;
+
 const Vec = zm.Vec;
 const Mat = zm.Mat;
 const Quat = zm.Quat;
@@ -96,6 +98,9 @@ look_dir: Vec = zm.f32x4(1,0,0,0),
 right_dir: Vec = zm.f32x4(0,1,0,0),
 
 player_pos: Vec = zm.f32x4(0,dims.player_height,0,0),
+
+level_select_brightness: f32 = 0.0,
+last_level_complete: bool = false,
 
 current_level: usize = 0,
 level_rotates_colors: bool = false,
@@ -377,6 +382,7 @@ pub fn init(app: *App, core: *mach.Core) !void {
 pub fn deinit(_: *App, _: *mach.Core) void {}
 
 fn loadLevelSelect(app: *App) void {
+    app.level_select_brightness = 0.0;
     app.level_rotates_colors = false;
     app.map.shrinkRetainingCapacity(0);
     var total_len = levels.len; // select rooms
@@ -626,14 +632,20 @@ fn updateInputState(app: *App, core: *mach.Core) void {
                 .left_shift => {
                     app.keys |= Dir.shift;
                 },
-                .o => {
+                .o => if (allow_debug_commands) {
                     app.pending_colorblind_change = -1;
                 },
-                .p => {
+                .p => if (allow_debug_commands) {
                     app.pending_colorblind_change = 1;
                 },
                 .f => {
                     app.pending_color_rotation = true;
+                },
+                .l => if (allow_debug_commands) {
+                    app.last_level_complete = true;
+                },
+                .k => if (allow_debug_commands) {
+                    app.last_level_complete = false;
                 },
                 else => {},
             },
@@ -720,6 +732,21 @@ fn updateSimulation(app: *App, raw_delta_time: f32) void {
     if (app.pending_colorblind_change != 0) {
         app.colorblind_mode = app.colorblind_mode +% @truncate(u2, @bitCast(u32, app.pending_colorblind_change));
         app.pending_colorblind_change = 0;
+    }
+
+    if (app.last_level_complete) {
+        app.level_select_brightness += delta_time * 0.7;
+        if (app.level_select_brightness > 1.0) app.level_select_brightness = 1.0;
+        const brightness_byte: u32 = @floatToInt(u8, app.level_select_brightness * 255.0);
+        const brightness_color: u32 = 0xFF000000 | brightness_byte | (brightness_byte << 8) | (brightness_byte << 16);
+        var i: usize = 0;
+        while (i < app.map.len) : (i += 1) {
+            if (app.map.items(.type)[i] == .level_select) {
+                app.map.items(.color)[i] = brightness_color;
+            } else {
+                break; // level select is always at the beginning
+            }
+        }
     }
 
     const edges = &app.map.items(.edges)[app.current_room];
@@ -846,7 +873,10 @@ fn updateSimulation(app: *App, raw_delta_time: f32) void {
         const room = app.map.get(app.current_room);
         // load the level select, and point at it
         var next_level_id = app.current_level + 1;
-        if (next_level_id >= levels.len) next_level_id = 0;
+        if (next_level_id >= levels.len) {
+            next_level_id = 0;
+            app.last_level_complete = true;
+        }
         app.current_level = next_level_id;
 
         app.loadLevelSelect();
