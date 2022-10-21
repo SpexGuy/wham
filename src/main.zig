@@ -51,21 +51,14 @@ object_pipeline: *gpu.RenderPipeline,
 post_process_pipeline: *gpu.RenderPipeline,
 
 instance_list: *gpu.Buffer,
-keys: u8 = 0,
 yaw_turns: f32 = 0,
 pitch_turns: f32 = 0,
 
+last_keys: u8 = 0,
 mouse_captured: bool = false,
 mouse_pos_valid: bool = false,
 last_mouse_x: f32 = 0,
 last_mouse_y: f32 = 0,
-
-pending_mouse_dx: f32 = 0,
-pending_mouse_dy: f32 = 0,
-
-pending_grab_block: bool = false,
-pending_colorblind_change: i32 = 0,
-pending_color_rotation: bool = false,
 
 // 0: none,
 // 1: simulate no red cones
@@ -109,6 +102,17 @@ current_level: usize = 0,
 level_rotates_colors: bool = false,
 map: std.MultiArrayList(Room) = .{},
 game_mode: GameMode = .startup,
+
+const FrameInputs = struct {
+    mouse_dx: f32 = 0,
+    mouse_dy: f32 = 0,
+
+    grab_block: bool = false,
+    color_rotation: bool = false,
+    colorblind_change: i32 = 0,
+
+    keys: u8 = 0,
+};
 
 const GameMode = enum {
     startup,
@@ -456,8 +460,8 @@ fn loadLevel(app: *App, index: usize) void {
 
 pub fn update(app: *App, core: *mach.Core) !void {
     // Poll inputs
-    app.updateInputState(core);
-    app.updateSimulation(core.delta_time);
+    const inputs = app.updateInputState(core);
+    app.updateSimulation(core.delta_time, inputs);
 
     const use_post_process = true;
 
@@ -609,7 +613,8 @@ pub fn update(app: *App, core: *mach.Core) !void {
     core.swap_chain.?.present();
 }
 
-fn updateInputState(app: *App, core: *mach.Core) void {
+fn updateInputState(app: *App, core: *mach.Core) FrameInputs {
+    var inputs: FrameInputs = .{};
     while (core.pollEvent()) |event| {
         switch (event) {
             .key_press => |ev| switch (ev.key) {
@@ -625,31 +630,31 @@ fn updateInputState(app: *App, core: *mach.Core) void {
                     }
                 },
                 .w, .up => {
-                    app.keys |= Dir.up;
+                    app.last_keys |= Dir.up;
                 },
                 .s, .down => {
-                    app.keys |= Dir.down;
+                    app.last_keys |= Dir.down;
                 },
                 .a, .left => {
-                    app.keys |= Dir.left;
+                    app.last_keys |= Dir.left;
                 },
                 .d, .right => {
-                    app.keys |= Dir.right;
-                },
-                .e, .space => {
-                    app.pending_grab_block = true;
+                    app.last_keys |= Dir.right;
                 },
                 .left_shift => {
-                    app.keys |= Dir.shift;
+                    app.last_keys |= Dir.shift;
+                },
+                .e, .space => {
+                    inputs.grab_block = true;
                 },
                 .o => if (allow_debug_commands) {
-                    app.pending_colorblind_change = -1;
+                    inputs.colorblind_change = -1;
                 },
                 .p => if (allow_debug_commands) {
-                    app.pending_colorblind_change = 1;
+                    inputs.colorblind_change = 1;
                 },
                 .f => {
-                    app.pending_color_rotation = true;
+                    inputs.color_rotation = true;
                 },
                 .l => if (allow_debug_commands) {
                     app.last_level_complete = true;
@@ -661,19 +666,19 @@ fn updateInputState(app: *App, core: *mach.Core) void {
             },
             .key_release => |ev| switch (ev.key) {
                 .w, .up => {
-                    app.keys &= ~Dir.up;
+                    app.last_keys &= ~Dir.up;
                 },
                 .s, .down => {
-                    app.keys &= ~Dir.down;
+                    app.last_keys &= ~Dir.down;
                 },
                 .a, .left => {
-                    app.keys &= ~Dir.left;
+                    app.last_keys &= ~Dir.left;
                 },
                 .d, .right => {
-                    app.keys &= ~Dir.right;
+                    app.last_keys &= ~Dir.right;
                 },
                 .left_shift => {
-                    app.keys &= ~Dir.shift;
+                    app.last_keys &= ~Dir.shift;
                 },
                 else => {},
             },
@@ -683,8 +688,8 @@ fn updateInputState(app: *App, core: *mach.Core) void {
                     const dx = mm.pos.x - app.last_mouse_x;
                     const dy = mm.pos.y - app.last_mouse_y;
                     if (dx <= 100 and dy <= 100) {
-                        app.pending_mouse_dx += @floatCast(f32, dx);
-                        app.pending_mouse_dy += @floatCast(f32, dy);
+                        inputs.mouse_dx += @floatCast(f32, dx);
+                        inputs.mouse_dy += @floatCast(f32, dy);
                     }
                 }
 
@@ -707,9 +712,11 @@ fn updateInputState(app: *App, core: *mach.Core) void {
             else => {},
         }
     }
+    inputs.keys = app.last_keys;
+    return inputs;
 }
 
-fn updateSimulation(app: *App, raw_delta_time: f32) void {
+fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
     var should_check_solved = false;
 
     const theta = app.yaw_turns * tau;
@@ -722,44 +729,33 @@ fn updateSimulation(app: *App, raw_delta_time: f32) void {
     const delta_time = std.math.min(raw_delta_time, 0.2);
 
     if (app.game_mode != .startup) {
-        app.yaw_turns += app.pending_mouse_dx / 1000;
-        app.pitch_turns -= app.pending_mouse_dy / 1000;
+        app.yaw_turns += inputs.mouse_dx / 1000;
+        app.pitch_turns -= inputs.mouse_dy / 1000;
 
         app.yaw_turns = @mod(app.yaw_turns, 1.0);
         app.pitch_turns = std.math.clamp(app.pitch_turns, -0.249, 0.249);
 
-        const move_speed: f32 = if (app.keys & Dir.shift != 0) dims.run_speed else dims.walk_speed;
+        const move_speed: f32 = if (inputs.keys & Dir.shift != 0) dims.run_speed else dims.walk_speed;
         const vec_move_speed = @splat(4, move_speed * delta_time);
 
-        if (app.keys & Dir.right != 0) {
+        if (inputs.keys & Dir.right != 0) {
             app.player_pos += app.right_dir * vec_move_speed;
-        } else if (app.keys & Dir.left != 0) {
+        } else if (inputs.keys & Dir.left != 0) {
             app.player_pos -= app.right_dir * vec_move_speed;
         }
 
-        if (app.keys & Dir.up != 0) {
+        if (inputs.keys & Dir.up != 0) {
             app.player_pos += app.forward_dir * vec_move_speed;
-        } else if (app.keys & Dir.down != 0) {
+        } else if (inputs.keys & Dir.down != 0) {
             app.player_pos -= app.forward_dir * vec_move_speed;
         }
 
-        if (app.pending_colorblind_change != 0) {
-            app.colorblind_mode = app.colorblind_mode +% @truncate(u2, @bitCast(u32, app.pending_colorblind_change));
-        }
-
-        if (app.pending_color_rotation) {
-            app.target_color_rotation += 1;
-            if (app.target_color_rotation == 3) app.target_color_rotation = 0;
-            std.debug.print("Color rotation: {}\n", .{app.target_color_rotation});
+        if (inputs.colorblind_change != 0) {
+            app.colorblind_mode = app.colorblind_mode +% @truncate(u2, @bitCast(u32, inputs.colorblind_change));
         }
     } else {
         app.player_pos += app.forward_dir * @splat(4, delta_time * dims.startup_glide_speed);
     }
-
-    app.pending_colorblind_change = 0;
-    app.pending_mouse_dx = 0;
-    app.pending_mouse_dy = 0;
-    app.pending_color_rotation = false;
 
     if (app.last_level_complete) {
         app.level_select_brightness += delta_time * 0.7;
@@ -858,9 +854,9 @@ fn updateSimulation(app: *App, raw_delta_time: f32) void {
         }
     }
 
-    if (app.pending_grab_block) {
-        app.pending_grab_block = false;
+    var rotate_colors = inputs.color_rotation;
 
+    if (inputs.grab_block) {
         // Make sure we are in a normal room
         if (app.map.items(.type)[app.current_room] == .normal)
         {
@@ -868,7 +864,7 @@ fn updateSimulation(app: *App, raw_delta_time: f32) void {
                 app.game_mode = .normal;
             }
             if (app.level_rotates_colors) {
-                app.pending_color_rotation = true;
+                rotate_colors = true;
             }
             // Swap our cube with the one in this room
             const room_cube = &app.map.items(.cube)[app.current_room];
@@ -879,6 +875,12 @@ fn updateSimulation(app: *App, raw_delta_time: f32) void {
             if (room_cube.* != NO_ROOM and app.held_cube == NO_ROOM)
                 should_check_solved = true;
         }
+    }
+
+    if (rotate_colors) {
+        app.target_color_rotation += 1;
+        if (app.target_color_rotation == 3) app.target_color_rotation = 0;
+        std.debug.print("Color rotation: {}\n", .{app.target_color_rotation});
     }
 
     var target_color_rotation_f32 = @intToFloat(f32, app.target_color_rotation);
@@ -949,8 +951,6 @@ fn moveCurrentRoom(app: *App, direction: u2) void {
         // A level was selected, load it properly
         app.loadLevel(old_room_index);
     }
-
-    app.pending_grab_block = false;
 }
 
 fn abs(x: anytype) @TypeOf(x) {
