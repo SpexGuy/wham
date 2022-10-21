@@ -60,6 +60,9 @@ mouse_pos_valid: bool = false,
 last_mouse_x: f32 = 0,
 last_mouse_y: f32 = 0,
 
+pending_mouse_dx: f32 = 0,
+pending_mouse_dy: f32 = 0,
+
 pending_grab_block: bool = false,
 pending_colorblind_change: i32 = 0,
 pending_color_rotation: bool = false,
@@ -105,6 +108,13 @@ last_level_complete: bool = false,
 current_level: usize = 0,
 level_rotates_colors: bool = false,
 map: std.MultiArrayList(Room) = .{},
+game_mode: GameMode = .startup,
+
+const GameMode = enum {
+    startup,
+    normal,
+    level_select,
+};
 
 const Dir = struct {
     const up: u8 = 0b0001;
@@ -376,7 +386,7 @@ pub fn init(app: *App, core: *mach.Core) !void {
 
     app.meshes.init(core.device, core.device.getQueue());
 
-    app.loadLevelSelect();
+    app.loadLevel(0);
 }
 
 pub fn deinit(_: *App, _: *mach.Core) void {}
@@ -673,11 +683,8 @@ fn updateInputState(app: *App, core: *mach.Core) void {
                     const dx = mm.pos.x - app.last_mouse_x;
                     const dy = mm.pos.y - app.last_mouse_y;
                     if (dx <= 100 and dy <= 100) {
-                        app.yaw_turns += @floatCast(f32, dx) / 1000;
-                        app.pitch_turns -= @floatCast(f32, dy) / 1000;
-
-                        app.yaw_turns = @mod(app.yaw_turns, 1.0);
-                        app.pitch_turns = std.math.clamp(app.pitch_turns, -0.249, 0.249);
+                        app.pending_mouse_dx += @floatCast(f32, dx);
+                        app.pending_mouse_dy += @floatCast(f32, dy);
                     }
                 }
 
@@ -714,25 +721,45 @@ fn updateSimulation(app: *App, raw_delta_time: f32) void {
     // Prevent giant timesteps from causing problems
     const delta_time = std.math.min(raw_delta_time, 0.2);
 
-    const move_speed: f32 = if (app.keys & Dir.shift != 0) dims.run_speed else dims.walk_speed;
-    const vec_move_speed = @splat(4, move_speed * delta_time);
+    if (app.game_mode != .startup) {
+        app.yaw_turns += app.pending_mouse_dx / 1000;
+        app.pitch_turns -= app.pending_mouse_dy / 1000;
 
-    if (app.keys & Dir.right != 0) {
-        app.player_pos += app.right_dir * vec_move_speed;
-    } else if (app.keys & Dir.left != 0) {
-        app.player_pos -= app.right_dir * vec_move_speed;
+        app.yaw_turns = @mod(app.yaw_turns, 1.0);
+        app.pitch_turns = std.math.clamp(app.pitch_turns, -0.249, 0.249);
+
+        const move_speed: f32 = if (app.keys & Dir.shift != 0) dims.run_speed else dims.walk_speed;
+        const vec_move_speed = @splat(4, move_speed * delta_time);
+
+        if (app.keys & Dir.right != 0) {
+            app.player_pos += app.right_dir * vec_move_speed;
+        } else if (app.keys & Dir.left != 0) {
+            app.player_pos -= app.right_dir * vec_move_speed;
+        }
+
+        if (app.keys & Dir.up != 0) {
+            app.player_pos += app.forward_dir * vec_move_speed;
+        } else if (app.keys & Dir.down != 0) {
+            app.player_pos -= app.forward_dir * vec_move_speed;
+        }
+
+        if (app.pending_colorblind_change != 0) {
+            app.colorblind_mode = app.colorblind_mode +% @truncate(u2, @bitCast(u32, app.pending_colorblind_change));
+        }
+
+        if (app.pending_color_rotation) {
+            app.target_color_rotation += 1;
+            if (app.target_color_rotation == 3) app.target_color_rotation = 0;
+            std.debug.print("Color rotation: {}\n", .{app.target_color_rotation});
+        }
+    } else {
+        app.player_pos += app.forward_dir * @splat(4, delta_time * dims.startup_glide_speed);
     }
 
-    if (app.keys & Dir.up != 0) {
-        app.player_pos += app.forward_dir * vec_move_speed;
-    } else if (app.keys & Dir.down != 0) {
-        app.player_pos -= app.forward_dir * vec_move_speed;
-    }
-
-    if (app.pending_colorblind_change != 0) {
-        app.colorblind_mode = app.colorblind_mode +% @truncate(u2, @bitCast(u32, app.pending_colorblind_change));
-        app.pending_colorblind_change = 0;
-    }
+    app.pending_colorblind_change = 0;
+    app.pending_mouse_dx = 0;
+    app.pending_mouse_dy = 0;
+    app.pending_color_rotation = false;
 
     if (app.last_level_complete) {
         app.level_select_brightness += delta_time * 0.7;
@@ -837,6 +864,9 @@ fn updateSimulation(app: *App, raw_delta_time: f32) void {
         // Make sure we are in a normal room
         if (app.map.items(.type)[app.current_room] == .normal)
         {
+            if (app.game_mode == .startup) {
+                app.game_mode = .normal;
+            }
             if (app.level_rotates_colors) {
                 app.pending_color_rotation = true;
             }
@@ -849,13 +879,6 @@ fn updateSimulation(app: *App, raw_delta_time: f32) void {
             if (room_cube.* != NO_ROOM and app.held_cube == NO_ROOM)
                 should_check_solved = true;
         }
-    }
-
-    if (app.pending_color_rotation) {
-        app.target_color_rotation += 1;
-        if (app.target_color_rotation == 3) app.target_color_rotation = 0;
-        std.debug.print("Color rotation: {}\n", .{app.target_color_rotation});
-        app.pending_color_rotation = false;
     }
 
     var target_color_rotation_f32 = @intToFloat(f32, app.target_color_rotation);
