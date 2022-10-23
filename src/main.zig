@@ -29,8 +29,7 @@ const ObjectUniforms = extern struct {
     transform_2: Vec,
     color_a: Vec,
     color_b: Vec,
-    blend_offset_scale: [2]f32,
-    _pad: [2]f32 = .{0,0},
+    blend_offset_scale: Vec,
 };
 
 const PostProcessUniforms = extern struct {
@@ -109,48 +108,41 @@ level_rotates_colors: bool = false,
 map: std.MultiArrayList(Room) = .{},
 game_mode: GameMode = .startup,
 
-pub const AABB2 = struct {
-    min: [2]f32,
-    max: [2]f32,
+pub const AABB = struct {
+    min: [3]f32,
+    max: [3]f32,
 
-    pub const empty = AABB2{
-        .min = .{  std.math.inf_f32,  std.math.inf_f32 },
-        .max = .{ -std.math.inf_f32, -std.math.inf_f32 },
+    pub const empty = AABB{
+        .min = .{  std.math.inf_f32,  std.math.inf_f32,  std.math.inf_f32 },
+        .max = .{ -std.math.inf_f32, -std.math.inf_f32, -std.math.inf_f32 },
     };
 
-    pub fn include(self: *AABB2, v: [2]f32) void {
-        self.min[0] = std.math.min(self.min[0], v[0]);
-        self.min[1] = std.math.min(self.min[1], v[1]);
-        self.max[0] = std.math.max(self.max[0], v[0]);
-        self.max[1] = std.math.max(self.max[1], v[1]);
-    }
-
-    pub fn isEmpty(self: AABB2) bool {
+    pub fn isEmpty(self: AABB) bool {
         return self.min[0] > self.max[0];
     }
 
-    pub fn rotateXZ(self: *AABB2, rotation: u2) void {
+    pub fn rotateXZ(self: *AABB, rotation: u2) void {
         if (rotation != 0) {
             const tmp = self.*;
             self.* = switch (rotation) {
                 1 => .{
-                    .min = .{ tmp.min[1], -tmp.max[0] },
-                    .max = .{ tmp.max[1], -tmp.min[0] },
+                    .min = .{ tmp.min[2], tmp.min[1], -tmp.max[0] },
+                    .max = .{ tmp.max[2], tmp.max[1], -tmp.min[0] },
                 },
                 2 => .{
-                    .min = .{ -tmp.max[0], -tmp.max[1] },
-                    .max = .{ -tmp.min[0], -tmp.min[1] },
+                    .min = .{ -tmp.max[0], tmp.min[1], -tmp.max[2] },
+                    .max = .{ -tmp.min[0], tmp.max[1], -tmp.min[2] },
                 },
                 3 => .{
-                    .min = .{ -tmp.max[1], tmp.min[0] },
-                    .max = .{ -tmp.min[1], tmp.max[0] },
+                    .min = .{ -tmp.max[2], tmp.min[1], tmp.min[0] },
+                    .max = .{ -tmp.min[2], tmp.max[1], tmp.max[0] },
                 },
                 else => unreachable,
             };
         }
     }
 
-    pub fn rotatedXZ(self: AABB2, rotation: u2) AABB2 {
+    pub fn rotatedXZ(self: AABB, rotation: u2) AABB {
         var rot = self;
         rot.rotateXZ(rotation);
         return rot;
@@ -171,44 +163,52 @@ pub const Plane2 = struct {
         return zm.dot2(right, Vec{ point[0], point[1], 0, 0 })[0];
     }
 
-    pub fn projectAabb(plane: Plane2, aabb: AABB2) [2]f32 {
-        var min = projectPoint(plane, aabb.min);
+    pub fn projectAabb(plane: Plane2, aabb: AABB) [2]f32 {
+        var min = projectPoint(plane, .{ aabb.min[0], aabb.min[2] });
         var max = min;
         {
-            const along = projectPoint(plane, aabb.max);
+            const along = projectPoint(plane, .{ aabb.max[0], aabb.max[2] });
             min = std.math.min(min, along);
             max = std.math.max(max, along);
         }
         {
-            const along = projectPoint(plane, .{aabb.min[0], aabb.max[1]});
+            const along = projectPoint(plane, .{ aabb.min[0], aabb.max[2] });
             min = std.math.min(min, along);
             max = std.math.max(max, along);
         }
         {
-            const along = projectPoint(plane, .{aabb.max[0], aabb.min[1]});
+            const along = projectPoint(plane, .{ aabb.max[0], aabb.min[2] });
             min = std.math.min(min, along);
             max = std.math.max(max, along);
         }
         return .{min, max};
     }
 
-    pub fn projectOffsetAabb(plane: Plane2, aabb: AABB2, offset: [2]f32) [2]f32 {
+    pub fn projectOffsetAabb(plane: Plane2, aabb: AABB, offset: [2]f32) [2]f32 {
         const aligned_offset = projectPoint(plane, offset);
         const range = projectAabb(plane, aabb);
         return .{ range[0] + aligned_offset, range[1] + aligned_offset };
     }
 };
 
-pub fn makeOffsetScale(range: [2]f32) [2]f32 {
+pub fn calcOffsetScale(x_range: [2]f32, y_range: [2]f32) Vec {
     // let diff = range[1] - range[0]
     // (x - range[0]) / diff = [0..1]
     // x / diff - range[0] / diff = [0..1]
     // x * 1/diff + (range[0] * 1/diff) = [0..1]
     // bake values for a single madd on gpu
-    const diff = range[1] - range[0];
-    const scale = 1.0/diff;
-    const offset = -range[0] * scale;
-    return .{ offset, scale };
+    const x_diff = x_range[1] - x_range[0];
+    const y_diff = y_range[1] - y_range[0];
+    const scale = 1.0/(x_diff + y_diff);
+    const x_offset = -x_range[0] * scale;
+    const y_offset = -y_range[0] * scale;
+    return .{ x_offset, scale, y_offset, scale };
+}
+
+pub fn makeOffsetScale(plane: Plane2, aabb: AABB, rotation: u2, translation: [2]f32) Vec {
+    const x_range = plane.projectOffsetAabb(aabb.rotatedXZ(rotation), translation);
+    const y_range = [2]f32{ aabb.min[1], aabb.max[1] };
+    return calcOffsetScale(x_range, y_range);
 }
 
 const FrameInputs = struct {
@@ -249,7 +249,7 @@ const InstanceAttrs = extern struct {
     rotation: u32,
     color_a: u32,
     color_b: u32,
-    offset_scale: [2]f32 = undefined,
+    offset_scale: [4]f32 = undefined,
 };
 
 pub const NO_ROOM = ~@as(u30, 0);
@@ -400,7 +400,7 @@ pub fn init(app: *App, core: *mach.Core) !void {
                         .{
                             .shader_location = 5,
                             .offset = @offsetOf(InstanceAttrs, "offset_scale"),
-                            .format = .float32x2,
+                            .format = .float32x4,
                         },
                     },
                 }),
@@ -470,6 +470,11 @@ pub fn init(app: *App, core: *mach.Core) !void {
                             .shader_location = 4,
                             .offset = @offsetOf(InstanceAttrs, "color_b"),
                             .format = .unorm8x4,
+                        },
+                        .{
+                            .shader_location = 5,
+                            .offset = @offsetOf(InstanceAttrs, "offset_scale"),
+                            .format = .float32x4,
                         },
                     },
                 }),
@@ -1179,21 +1184,25 @@ fn updateHeldObjectUniforms(app: *App, queue: *gpu.Queue) void {
     const object_pos = app.player_pos
         + @splat(4, fwd_dist) * app.forward_dir
         + @splat(4, right_dist) * app.right_dir
-        + zm.f32x4(0, 0.18 - dims.player_height, 0, 0);
+        + zm.f32x4(0, dims.held_height - dims.player_height, 0, 0);
     const plane = Plane2{
         .normal = .{ app.forward_dir[0], app.forward_dir[2] },
     };
     const projected_pos = plane.projectPoint(.{ object_pos[0], object_pos[2] });
-    const scale = Vec{ held_scale, held_scale, held_scale, 1.0 };        
+    const scale = Vec{ held_scale, held_scale, held_scale, 1.0 };     
+    const aabb = app.meshes.cube.aabb;   
     const uniforms = ObjectUniforms{
         .transform_0 = scale * Vec{ app.forward_dir[0], 0, app.right_dir[0], object_pos[0] },
         .transform_1 = scale * Vec{ app.forward_dir[1], 1, app.right_dir[1], object_pos[1] },
         .transform_2 = scale * Vec{ app.forward_dir[2], 0, app.right_dir[2], object_pos[2] },
         .color_a = colorToVec(app.map.items(.color)[app.held_cube][0]),
         .color_b = colorToVec(app.map.items(.color)[app.held_cube][1]),
-        .blend_offset_scale = makeOffsetScale(.{
-            projected_pos + app.meshes.cube.aabb2.min[1] * held_scale,
-            projected_pos + app.meshes.cube.aabb2.max[1] * held_scale,
+        .blend_offset_scale = calcOffsetScale(.{
+            projected_pos + aabb.min[2] * held_scale,
+            projected_pos + aabb.max[2] * held_scale,
+        }, .{
+            dims.held_height + aabb.min[1] * held_scale,
+            dims.held_height + aabb.max[1] * held_scale,
         }),
     };
     queue.writeBuffer(app.held_object_uniform_buffer, 0, std.mem.asBytes(&uniforms));
@@ -1292,31 +1301,27 @@ fn updateInstances(app: *App, queue: *gpu.Queue) void {
         .normal = .{ app.forward_dir[0], app.forward_dir[2] },
     };
     {
-        const aabb = app.meshes.room.aabb2;
+        const aabb = app.meshes.room.aabb;
         for (b.rooms.slice()) |*inst| {
-            inst.offset_scale = makeOffsetScale(facing_plane.projectOffsetAabb(
-                aabb.rotatedXZ(@intCast(u2, inst.rotation)), inst.translation));
+            inst.offset_scale = makeOffsetScale(facing_plane, aabb, @intCast(u2, inst.rotation), inst.translation);
         }
     }
     {
-        const aabb = app.meshes.wall.aabb2;
+        const aabb = app.meshes.wall.aabb;
         for (b.walls.slice()) |*inst| {
-            inst.offset_scale = makeOffsetScale(facing_plane.projectOffsetAabb(
-                aabb.rotatedXZ(@intCast(u2, inst.rotation)), inst.translation));
+            inst.offset_scale = makeOffsetScale(facing_plane, aabb, @intCast(u2, inst.rotation), inst.translation);
         }
     }
     {
-        const aabb = app.meshes.door.aabb2;
+        const aabb = app.meshes.door.aabb;
         for (b.doors.slice()) |*inst| {
-            inst.offset_scale = makeOffsetScale(facing_plane.projectOffsetAabb(
-                aabb.rotatedXZ(@intCast(u2, inst.rotation)), inst.translation));
+            inst.offset_scale = makeOffsetScale(facing_plane, aabb, @intCast(u2, inst.rotation), inst.translation);
         }
     }
     {
-        const aabb = app.meshes.cube.aabb2;
+        const aabb = app.meshes.cube.aabb;
         for (b.cubes.slice()) |*inst| {
-            inst.offset_scale = makeOffsetScale(facing_plane.projectOffsetAabb(
-                aabb.rotatedXZ(@intCast(u2, inst.rotation)), inst.translation));
+            inst.offset_scale = makeOffsetScale(facing_plane, aabb, @intCast(u2, inst.rotation), inst.translation);
         }
     }
 

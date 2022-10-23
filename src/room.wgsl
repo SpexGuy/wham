@@ -8,7 +8,7 @@ struct ObjectUniforms {
   transform: mat3x4<f32>,
   color_a: vec4<f32>,
   color_b: vec4<f32>,
-  blend_offset_scale: vec2<f32>,
+  blend_offset_scale: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> view: ViewUniforms;
@@ -24,6 +24,7 @@ struct ScreenspaceInterpolators {
   @location(0) color_a: vec3<f32>,
   @location(1) color_b: vec3<f32>,
   @location(2) depth: f32,
+  @location(3) blend_y: f32,
   // This definition is repeated in ScreenspaceVertexOut, don't forget to modify both.
 };
 
@@ -41,6 +42,7 @@ struct ScreenspaceVertexOut {
   @location(0) color_a: vec3<f32>,
   @location(1) color_b: vec3<f32>,
   @location(2) depth: f32,
+  @location(3) blend_y: f32,
   @builtin(position) position: vec4<f32>,
 }
 
@@ -71,10 +73,13 @@ fn transform_instance_vertex(
   return rotated + vec3<f32>(translation.x, 0, translation.y);
 }
 
-fn calculate_aabb_blend(blend_offset_scale: vec2<f32>, position: vec3<f32>) -> f32 {
+fn calculate_aabb_blend(blend_offset_scale: vec4<f32>, position: vec3<f32>) -> f32 {
   let across = vec3<f32>(view.forward.y, 0, -view.forward.x);
   let along = dot(across, position);
-  return blend_offset_scale.y * along + blend_offset_scale.x;
+  let above = position.y;
+  let blend_x = blend_offset_scale.y * along + blend_offset_scale.x;
+  let blend_y = blend_offset_scale.w * above + blend_offset_scale.z;
+  return blend_x + blend_y;
 }
 
 @vertex
@@ -84,7 +89,7 @@ fn instanced_vert_main_aabb(
   @location(2) a_rotation: u32,
   @location(3) a_color_a: vec4<f32>,
   @location(4) a_color_b: vec4<f32>,
-  @location(5) a_blend_offset_scale: vec2<f32>,
+  @location(5) a_blend_offset_scale: vec4<f32>,
 ) -> VertexOut {
   var result: VertexOut;
   let world_pos = transform_instance_vertex(a_pos, a_rotation, a_translation);
@@ -102,6 +107,7 @@ fn instanced_vert_main_screenspace(
   @location(2) a_rotation: u32,
   @location(3) a_color_a: vec4<f32>,
   @location(4) a_color_b: vec4<f32>,
+  @location(5) a_blend_offset_scale: vec4<f32>,
 ) -> ScreenspaceVertexOut {
   var result: ScreenspaceVertexOut;
   let world_pos = transform_instance_vertex(a_pos, a_rotation, a_translation);
@@ -109,6 +115,7 @@ fn instanced_vert_main_screenspace(
   result.color_a = a_color_a.rgb;
   result.color_b = a_color_b.rgb;
   result.depth = result.position.w;
+  result.blend_y = a_blend_offset_scale.w * world_pos.y + a_blend_offset_scale.z;
   return result;
 }
 
@@ -130,7 +137,8 @@ fn frag_main_screenspace(
   @builtin(position) device_pos : vec4<f32>,
   inputs: ScreenspaceInterpolators,
 ) -> @location(0) vec4<f32> {
-  let blend = 1.0 - device_pos.x * view.inv_screen_size.x;
+  let blend_x = 1.0 - device_pos.x * view.inv_screen_size.x;
+  let blend = inputs.blend_y + blend_x * 0.5;
   let color = mix(inputs.color_a, inputs.color_b, blend);
   let brightness = 1.0 - smoothstep(-0.8, 4.0, inputs.depth);
   return vec4<f32>(vec3<f32>(brightness) * color, 1.0);

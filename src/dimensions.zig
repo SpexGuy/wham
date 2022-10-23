@@ -8,3 +8,4 @@ pub const startup_glide_speed = 0.25;
 pub const collision_tolerance = 0.03;
 pub const frame_depth = 0.015;
 pub const player_height = 0.26;
+pub const held_height = 0.18;

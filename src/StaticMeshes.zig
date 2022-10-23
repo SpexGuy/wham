@@ -3,13 +3,13 @@ const dims = @import("dimensions.zig");
 const main = @import("main.zig");
 const StaticMeshes = @This();
 
-const AABB2 = main.AABB2;
+const AABB = main.AABB;
 
 pub const MeshChunk = struct {
     base_vertex: i32,
     base_index: u32,
     indices_count: u32,
-    aabb2: main.AABB2,
+    aabb: main.AABB,
 
     pub inline fn draw(chunk: MeshChunk, pass: *gpu.RenderPassEncoder, instance_count: u32, first_instance: u32) void {
         pass.drawIndexed(chunk.indices_count, instance_count, chunk.base_index, chunk.base_vertex, first_instance);
@@ -59,9 +59,9 @@ pub fn init(meshes: *StaticMeshes, device: *gpu.Device, queue: *gpu.Queue) void 
         .{ -dims.room_width, dims.room_height, -dims.room_width },
     };
 
-    const room_aabb = main.AABB2{
-        .min = .{ -dims.room_width, -dims.room_width },
-        .max = .{  dims.room_width,  dims.room_width },
+    const room_aabb = main.AABB{
+        .min = .{ -dims.room_width, 0, -dims.room_width },
+        .max = .{  dims.room_width, dims.room_height,  dims.room_width },
     };
     const wall_aabb = room_aabb; // walls should blend seamlessly into rooms
 
@@ -128,9 +128,9 @@ pub fn init(meshes: *StaticMeshes, device: *gpu.Device, queue: *gpu.Queue) void 
         .{ dims.room_width - dims.frame_depth, 0, dims.door_width - dims.frame_depth },
         .{ dims.room_width, 0, dims.door_width - dims.frame_depth },
     };
-    const door_aabb = main.AABB2{
-        .min = .{ dims.room_width - dims.frame_depth, -dims.door_width - dims.frame_depth },
-        .max = .{ dims.room_width, dims.door_width + dims.frame_depth },
+    const door_aabb = main.AABB{
+        .min = .{ dims.room_width - dims.frame_depth, 0, -dims.door_width - dims.frame_depth },
+        .max = .{ dims.room_width, dims.door_height + dims.frame_depth, dims.door_width + dims.frame_depth },
     };
 
 
@@ -158,19 +158,19 @@ pub fn init(meshes: *StaticMeshes, device: *gpu.Device, queue: *gpu.Queue) void 
     };
 
     const cube_verts = [_][3]f32{
-        .{  0.05,  0.05,  0.05 },
-        .{ -0.05,  0.05,  0.05 },
-        .{ -0.05, -0.05,  0.05 },
-        .{  0.05, -0.05,  0.05 },
-        .{  0.05, -0.05, -0.05 },
-        .{ -0.05, -0.05, -0.05 },
-        .{ -0.05,  0.05, -0.05 },
-        .{  0.05,  0.05, -0.05 },
+        .{  0.05, 0.05,  0.05 },
+        .{ -0.05, 0.05,  0.05 },
+        .{ -0.05, 0.0 ,  0.05 },
+        .{  0.05, 0.0 ,  0.05 },
+        .{  0.05, 0.0 , -0.05 },
+        .{ -0.05, 0.0 , -0.05 },
+        .{ -0.05, 0.05, -0.05 },
+        .{  0.05, 0.05, -0.05 },
     };
 
-    const cube_aabb = main.AABB2{
-        .min = .{ -0.05, -0.05 },
-        .max = .{  0.05,  0.05 },
+    const cube_aabb = main.AABB{
+        .min = .{ -0.05, 0.0 , -0.05 },
+        .max = .{  0.05, 0.05,  0.05 },
     };
 
     const cube_indices = [_]u16{
@@ -252,25 +252,25 @@ pub fn init(meshes: *StaticMeshes, device: *gpu.Device, queue: *gpu.Queue) void 
             .base_vertex = @intCast(i32, room_base_vertex),
             .base_index = room_base_index,
             .indices_count = room_indices.len,
-            .aabb2 = room_aabb,
+            .aabb = room_aabb,
         },
         .wall = .{
             .base_vertex = @intCast(i32, wall_base_vertex),
             .base_index = wall_base_index,
             .indices_count = wall_indices.len,
-            .aabb2 = wall_aabb,
+            .aabb = wall_aabb,
         },
         .door = .{
             .base_vertex = @intCast(i32, door_base_vertex),
             .base_index = door_base_index,
             .indices_count = door_indices.len,
-            .aabb2 = door_aabb,
+            .aabb = door_aabb,
         },
         .cube = .{
             .base_vertex = @intCast(i32, cube_base_vertex),
             .base_index = cube_base_index,
             .indices_count = cube_indices.len,
-            .aabb2 = cube_aabb,
+            .aabb = cube_aabb,
         },
     };
 }
