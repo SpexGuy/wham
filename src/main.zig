@@ -159,7 +159,7 @@ pub const Plane2 = struct {
     }
 
     pub fn projectPoint(plane: Plane2, point: [2]f32) f32 {
-        const right = Vec{ plane.normal[1], -plane.normal[0], 0, 0 };
+        const right = Vec{ -plane.normal[1], plane.normal[0], 0, 0 };
         return zm.dot2(right, Vec{ point[0], point[1], 0, 0 })[0];
     }
 

@@ -74,7 +74,7 @@ fn transform_instance_vertex(
 }
 
 fn calculate_aabb_blend(blend_offset_scale: vec4<f32>, position: vec3<f32>) -> f32 {
-  let across = vec3<f32>(view.forward.y, 0, -view.forward.x);
+  let across = vec3<f32>(-view.forward.y, 0, view.forward.x);
   let along = dot(across, position);
   let above = position.y;
   let blend_x = blend_offset_scale.y * along + blend_offset_scale.x;
@@ -137,7 +137,7 @@ fn frag_main_screenspace(
   @builtin(position) device_pos : vec4<f32>,
   inputs: ScreenspaceInterpolators,
 ) -> @location(0) vec4<f32> {
-  let blend_x = 1.0 - device_pos.x * view.inv_screen_size.x;
+  let blend_x = device_pos.x * view.inv_screen_size.x;
   let blend = inputs.blend_y + blend_x * 0.5;
   let color = mix(inputs.color_a, inputs.color_b, blend);
   let brightness = 1.0 - smoothstep(-0.8, 4.0, inputs.depth);
