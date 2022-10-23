@@ -19,13 +19,18 @@ pub const App = @This();
 
 const ViewUniforms = extern struct {
     view_proj: Mat,
+    inv_screen_size: [2]f32,
+    flat_look_xz: [2]f32,
 };
 
 const ObjectUniforms = extern struct {
     transform_0: Vec,
     transform_1: Vec,
     transform_2: Vec,
-    color: Vec,
+    color_a: Vec,
+    color_b: Vec,
+    blend_offset_scale: [2]f32,
+    _pad: [2]f32 = .{0,0},
 };
 
 const PostProcessUniforms = extern struct {
@@ -46,7 +51,8 @@ held_object_bindings: *gpu.BindGroup,
 post_process_uniform_buffer: *gpu.Buffer,
 post_process_bindings_layout: *gpu.BindGroupLayout,
 
-instanced_pipeline: *gpu.RenderPipeline,
+instanced_pipeline_aabb: *gpu.RenderPipeline,
+instanced_pipeline_screenspace: *gpu.RenderPipeline,
 object_pipeline: *gpu.RenderPipeline,
 post_process_pipeline: *gpu.RenderPipeline,
 
@@ -103,6 +109,108 @@ level_rotates_colors: bool = false,
 map: std.MultiArrayList(Room) = .{},
 game_mode: GameMode = .startup,
 
+pub const AABB2 = struct {
+    min: [2]f32,
+    max: [2]f32,
+
+    pub const empty = AABB2{
+        .min = .{  std.math.inf_f32,  std.math.inf_f32 },
+        .max = .{ -std.math.inf_f32, -std.math.inf_f32 },
+    };
+
+    pub fn include(self: *AABB2, v: [2]f32) void {
+        self.min[0] = std.math.min(self.min[0], v[0]);
+        self.min[1] = std.math.min(self.min[1], v[1]);
+        self.max[0] = std.math.max(self.max[0], v[0]);
+        self.max[1] = std.math.max(self.max[1], v[1]);
+    }
+
+    pub fn isEmpty(self: AABB2) bool {
+        return self.min[0] > self.max[0];
+    }
+
+    pub fn rotateXZ(self: *AABB2, rotation: u2) void {
+        if (rotation != 0) {
+            const tmp = self.*;
+            self.* = switch (rotation) {
+                1 => .{
+                    .min = .{ tmp.min[1], -tmp.max[0] },
+                    .max = .{ tmp.max[1], -tmp.min[0] },
+                },
+                2 => .{
+                    .min = .{ -tmp.max[0], -tmp.max[1] },
+                    .max = .{ -tmp.min[0], -tmp.min[1] },
+                },
+                3 => .{
+                    .min = .{ -tmp.max[1], tmp.min[0] },
+                    .max = .{ -tmp.min[1], tmp.max[0] },
+                },
+                else => unreachable,
+            };
+        }
+    }
+
+    pub fn rotatedXZ(self: AABB2, rotation: u2) AABB2 {
+        var rot = self;
+        rot.rotateXZ(rotation);
+        return rot;
+    }
+};
+
+pub const Plane2 = struct {
+    normal: [2]f32,
+
+    pub fn normalize(self: *Plane2) void {
+        const nm = zm.normalize2(.{ self.normal[0], self.normal[1], 0, 0 });
+        self.normal[0] = nm[0];
+        self.normal[1] = nm[1];
+    }
+
+    pub fn projectPoint(plane: Plane2, point: [2]f32) f32 {
+        const right = Vec{ plane.normal[1], -plane.normal[0], 0, 0 };
+        return zm.dot2(right, Vec{ point[0], point[1], 0, 0 })[0];
+    }
+
+    pub fn projectAabb(plane: Plane2, aabb: AABB2) [2]f32 {
+        var min = projectPoint(plane, aabb.min);
+        var max = min;
+        {
+            const along = projectPoint(plane, aabb.max);
+            min = std.math.min(min, along);
+            max = std.math.max(max, along);
+        }
+        {
+            const along = projectPoint(plane, .{aabb.min[0], aabb.max[1]});
+            min = std.math.min(min, along);
+            max = std.math.max(max, along);
+        }
+        {
+            const along = projectPoint(plane, .{aabb.max[0], aabb.min[1]});
+            min = std.math.min(min, along);
+            max = std.math.max(max, along);
+        }
+        return .{min, max};
+    }
+
+    pub fn projectOffsetAabb(plane: Plane2, aabb: AABB2, offset: [2]f32) [2]f32 {
+        const aligned_offset = projectPoint(plane, offset);
+        const range = projectAabb(plane, aabb);
+        return .{ range[0] + aligned_offset, range[1] + aligned_offset };
+    }
+};
+
+pub fn makeOffsetScale(range: [2]f32) [2]f32 {
+    // let diff = range[1] - range[0]
+    // (x - range[0]) / diff = [0..1]
+    // x / diff - range[0] / diff = [0..1]
+    // x * 1/diff + (range[0] * 1/diff) = [0..1]
+    // bake values for a single madd on gpu
+    const diff = range[1] - range[0];
+    const scale = 1.0/diff;
+    const offset = -range[0] * scale;
+    return .{ offset, scale };
+}
+
 const FrameInputs = struct {
     mouse_dx: f32 = 0,
     mouse_dy: f32 = 0,
@@ -139,7 +247,9 @@ const MSAA_COUNT = 4;
 const InstanceAttrs = extern struct {
     translation: [2]f32,
     rotation: u32,
-    color: u32,
+    color_a: u32,
+    color_b: u32,
+    offset_scale: [2]f32 = undefined,
 };
 
 pub const NO_ROOM = ~@as(u30, 0);
@@ -150,7 +260,7 @@ pub const Edge = packed struct(u32) {
 };
 
 pub const Room = struct {
-    color: u32,
+    color: [2]u32,
     edges: [4]Edge,
     cube: u30,
     type: RoomType = .normal,
@@ -243,11 +353,11 @@ pub fn init(app: *App, core: *mach.Core) !void {
         },
     }));
 
-    const instanced_pipeline = core.device.createRenderPipeline(&gpu.RenderPipeline.Descriptor{
+    const instanced_pipeline_aabb = core.device.createRenderPipeline(&gpu.RenderPipeline.Descriptor{
         .layout = instanced_layout,
         .vertex = gpu.VertexState.init(.{
             .module = room_shader_module,
-            .entry_point = "instanced_vert_main",
+            .entry_point = "instanced_vert_main_aabb",
             .buffers = &.{
                 gpu.VertexBufferLayout.init(.{
                     // vertex buffer
@@ -263,27 +373,34 @@ pub fn init(app: *App, core: *mach.Core) !void {
                     },
                 }),
                 gpu.VertexBufferLayout.init(.{
-                    // vertex buffer
+                    // instance buffer
                     .array_stride = @sizeOf(InstanceAttrs),
                     .step_mode = .instance,
                     .attributes = &[_]gpu.VertexAttribute{
                         .{
-                            // vertex
                             .shader_location = 1,
                             .offset = @offsetOf(InstanceAttrs, "translation"),
                             .format = .float32x2,
                         },
                         .{
-                            // vertex
                             .shader_location = 2,
                             .offset = @offsetOf(InstanceAttrs, "rotation"),
                             .format = .uint32,
                         },
                         .{
-                            // vertex
                             .shader_location = 3,
-                            .offset = @offsetOf(InstanceAttrs, "color"),
+                            .offset = @offsetOf(InstanceAttrs, "color_a"),
                             .format = .unorm8x4,
+                        },
+                        .{
+                            .shader_location = 4,
+                            .offset = @offsetOf(InstanceAttrs, "color_b"),
+                            .format = .unorm8x4,
+                        },
+                        .{
+                            .shader_location = 5,
+                            .offset = @offsetOf(InstanceAttrs, "offset_scale"),
+                            .format = .float32x2,
                         },
                     },
                 }),
@@ -292,6 +409,75 @@ pub fn init(app: *App, core: *mach.Core) !void {
         .fragment = &gpu.FragmentState.init(.{
             .module = room_shader_module,
             .entry_point = "frag_main",
+            .targets = &[_]gpu.ColorTargetState{.{
+                .format = core.swap_chain_format,
+            }},
+        }),
+        .depth_stencil = &.{
+            .format = .depth32_float,
+            .depth_write_enabled = true,
+            .depth_compare = .less,
+        },
+        .primitive = .{
+            .cull_mode = .back,
+            .topology = .triangle_list,
+        },
+        .multisample = .{
+            .count = MSAA_COUNT,
+        },
+    });
+
+    const instanced_pipeline_screenspace = core.device.createRenderPipeline(&gpu.RenderPipeline.Descriptor{
+        .layout = instanced_layout,
+        .vertex = gpu.VertexState.init(.{
+            .module = room_shader_module,
+            .entry_point = "instanced_vert_main_screenspace",
+            .buffers = &.{
+                gpu.VertexBufferLayout.init(.{
+                    // vertex buffer
+                    .array_stride = 3 * @sizeOf(f32),
+                    .step_mode = .vertex,
+                    .attributes = &[_]gpu.VertexAttribute{
+                        .{
+                            // vertex positions
+                            .shader_location = 0,
+                            .offset = 0,
+                            .format = .float32x3,
+                        },
+                    },
+                }),
+                gpu.VertexBufferLayout.init(.{
+                    // instance buffer
+                    .array_stride = @sizeOf(InstanceAttrs),
+                    .step_mode = .instance,
+                    .attributes = &[_]gpu.VertexAttribute{
+                        .{
+                            .shader_location = 1,
+                            .offset = @offsetOf(InstanceAttrs, "translation"),
+                            .format = .float32x2,
+                        },
+                        .{
+                            .shader_location = 2,
+                            .offset = @offsetOf(InstanceAttrs, "rotation"),
+                            .format = .uint32,
+                        },
+                        .{
+                            .shader_location = 3,
+                            .offset = @offsetOf(InstanceAttrs, "color_a"),
+                            .format = .unorm8x4,
+                        },
+                        .{
+                            .shader_location = 4,
+                            .offset = @offsetOf(InstanceAttrs, "color_b"),
+                            .format = .unorm8x4,
+                        },
+                    },
+                }),
+            },
+        }),
+        .fragment = &gpu.FragmentState.init(.{
+            .module = room_shader_module,
+            .entry_point = "frag_main_screenspace",
             .targets = &[_]gpu.ColorTargetState{.{
                 .format = core.swap_chain_format,
             }},
@@ -372,7 +558,8 @@ pub fn init(app: *App, core: *mach.Core) !void {
     });
 
     app.* = .{
-        .instanced_pipeline = instanced_pipeline,
+        .instanced_pipeline_aabb = instanced_pipeline_aabb,
+        .instanced_pipeline_screenspace = instanced_pipeline_screenspace,
         .object_pipeline = object_pipeline,
         .post_process_pipeline = post_process_pipeline,
 
@@ -419,7 +606,7 @@ fn loadLevelSelect(app: *App) void {
 
         // Level select room
         app.map.set(i, .{
-            .color = 0xFF000000,
+            .color = .{0,0},
             .edges = .{
                 .{ .to_room = level_start, .in_dir = 0 },
                 .{ .to_room = @intCast(u30, right_room), .in_dir = 3 },
@@ -450,7 +637,7 @@ fn loadLevelSelect(app: *App) void {
 }
 
 fn loadLevel(app: *App, index: usize) void {
-    app.level_rotates_colors = index >= 3;
+    app.level_rotates_colors = index >= 5;
     app.map.shrinkRetainingCapacity(0);
     app.map.ensureTotalCapacity(gpa, levels[index].len) catch @panic("Out of memory!");
     for (levels[index]) |room| app.map.appendAssumeCapacity(room);
@@ -569,12 +756,13 @@ pub fn update(app: *App, core: *mach.Core) !void {
         defer pass.release();
 
         // Do the rendering
-        pass.setPipeline(app.instanced_pipeline);
+        pass.setPipeline(app.instanced_pipeline_screenspace);
         pass.setBindGroup(0, app.view_bindings, &.{});
         app.meshes.bind(pass, 0);
         pass.setVertexBuffer(1, app.instance_list, 0, app.total_instances * @sizeOf(InstanceAttrs));
         app.meshes.room.draw(pass, app.num_visible_rooms, app.room_instance_offset);
         app.meshes.wall.draw(pass, app.num_visible_walls, app.wall_instance_offset);
+        pass.setPipeline(app.instanced_pipeline_aabb);
         app.meshes.door.draw(pass, app.num_visible_doors, app.door_instance_offset);
         app.meshes.cube.draw(pass, app.num_visible_cubes, app.cube_instance_offset);
 
@@ -749,10 +937,6 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
         } else if (inputs.keys & Dir.down != 0) {
             app.player_pos -= app.forward_dir * vec_move_speed;
         }
-
-        if (inputs.colorblind_change != 0) {
-            app.colorblind_mode = app.colorblind_mode +% @truncate(u2, @bitCast(u32, inputs.colorblind_change));
-        }
     } else {
         app.player_pos += app.forward_dir * @splat(4, delta_time * dims.startup_glide_speed);
     }
@@ -765,7 +949,7 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
         var i: usize = 0;
         while (i < app.map.len) : (i += 1) {
             if (app.map.items(.type)[i] == .level_select) {
-                app.map.items(.color)[i] = brightness_color;
+                app.map.items(.color)[i] = .{ brightness_color, brightness_color };
             } else {
                 break; // level select is always at the beginning
             }
@@ -852,6 +1036,10 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
             });
             last_cksum = cksum;
         }
+    }
+
+    if (inputs.colorblind_change != 0) {
+        app.colorblind_mode = app.colorblind_mode +% @truncate(u2, @bitCast(u32, inputs.colorblind_change));
     }
 
     var rotate_colors = inputs.color_rotation;
@@ -978,21 +1166,35 @@ fn updateViewUniforms(app: *App, queue: *gpu.Queue, size: mach.Size) void {
     // Update the view uniforms
     var uniforms: ViewUniforms = .{
         .view_proj = zm.mul(view, proj),
+        .inv_screen_size = .{ 1.0 / @intToFloat(f32, size.width), 1.0 / @intToFloat(f32, size.height) },
+        .flat_look_xz = .{ app.forward_dir[0], app.forward_dir[2] },
     };
     queue.writeBuffer(app.view_uniform_buffer, 0, std.mem.asBytes(&uniforms));
 }
 
 fn updateHeldObjectUniforms(app: *App, queue: *gpu.Queue) void {
+    const fwd_dist: f32 = std.math.sqrt2 * 0.05;
+    const right_dist: f32 = std.math.sqrt2 * 0.05;
+    const held_scale: f32 = 0.7;
     const object_pos = app.player_pos
-        + @splat(4, @as(f32, std.math.sqrt2 * 0.05)) * app.forward_dir
-        + @splat(4, @as(f32, std.math.sqrt2 * 0.05)) * app.right_dir
+        + @splat(4, fwd_dist) * app.forward_dir
+        + @splat(4, right_dist) * app.right_dir
         + zm.f32x4(0, 0.18 - dims.player_height, 0, 0);
-    const scale = Vec{ 0.7, 0.7, 0.7, 1.0 };        
+    const plane = Plane2{
+        .normal = .{ app.forward_dir[0], app.forward_dir[2] },
+    };
+    const projected_pos = plane.projectPoint(.{ object_pos[0], object_pos[2] });
+    const scale = Vec{ held_scale, held_scale, held_scale, 1.0 };        
     const uniforms = ObjectUniforms{
         .transform_0 = scale * Vec{ app.forward_dir[0], 0, app.right_dir[0], object_pos[0] },
         .transform_1 = scale * Vec{ app.forward_dir[1], 1, app.right_dir[1], object_pos[1] },
         .transform_2 = scale * Vec{ app.forward_dir[2], 0, app.right_dir[2], object_pos[2] },
-        .color = colorToVec(app.map.items(.color)[app.held_cube]),
+        .color_a = colorToVec(app.map.items(.color)[app.held_cube][0]),
+        .color_b = colorToVec(app.map.items(.color)[app.held_cube][1]),
+        .blend_offset_scale = makeOffsetScale(.{
+            projected_pos + app.meshes.cube.aabb2.min[1] * held_scale,
+            projected_pos + app.meshes.cube.aabb2.max[1] * held_scale,
+        }),
     };
     queue.writeBuffer(app.held_object_uniform_buffer, 0, std.mem.asBytes(&uniforms));
 }
@@ -1035,7 +1237,9 @@ fn darkenColor(color: u32) u32 {
 }
 
 fn updateInstances(app: *App, queue: *gpu.Queue) void {
-    var b = InstanceBuilder{ .slice = app.map.slice() };
+    var b = InstanceBuilder{
+        .slice = app.map.slice(),
+    };
 
     b.addRoom(app.current_room, .{0,0});
 
@@ -1081,6 +1285,42 @@ fn updateInstances(app: *App, queue: *gpu.Queue) void {
         b.addDiagonalInstances(app, right, forward);
     }
 
+    // Calculate derived instance properties
+    // TODO-OPT: This could be done in a compute shader
+    // TODO-OPT: This would be an easy place to do culling, since we have AABBs available.
+    const facing_plane = Plane2{
+        .normal = .{ app.forward_dir[0], app.forward_dir[2] },
+    };
+    {
+        const aabb = app.meshes.room.aabb2;
+        for (b.rooms.slice()) |*inst| {
+            inst.offset_scale = makeOffsetScale(facing_plane.projectOffsetAabb(
+                aabb.rotatedXZ(@intCast(u2, inst.rotation)), inst.translation));
+        }
+    }
+    {
+        const aabb = app.meshes.wall.aabb2;
+        for (b.walls.slice()) |*inst| {
+            inst.offset_scale = makeOffsetScale(facing_plane.projectOffsetAabb(
+                aabb.rotatedXZ(@intCast(u2, inst.rotation)), inst.translation));
+        }
+    }
+    {
+        const aabb = app.meshes.door.aabb2;
+        for (b.doors.slice()) |*inst| {
+            inst.offset_scale = makeOffsetScale(facing_plane.projectOffsetAabb(
+                aabb.rotatedXZ(@intCast(u2, inst.rotation)), inst.translation));
+        }
+    }
+    {
+        const aabb = app.meshes.cube.aabb2;
+        for (b.cubes.slice()) |*inst| {
+            inst.offset_scale = makeOffsetScale(facing_plane.projectOffsetAabb(
+                aabb.rotatedXZ(@intCast(u2, inst.rotation)), inst.translation));
+        }
+    }
+
+    // Upload streamed instance data to the gpu
     var total_instances: u32 = 0;
     app.room_instance_offset = total_instances;
     app.num_visible_rooms = @intCast(u32, b.rooms.len);
@@ -1193,14 +1433,16 @@ const InstanceBuilder = struct {
         b.rooms.appendAssumeCapacity(.{
             .translation = position,
             .rotation = 0,
-            .color = b.slice.items(.color)[index],
+            .color_a = b.slice.items(.color)[index][0],
+            .color_b = b.slice.items(.color)[index][1],
         });
         const cube = b.slice.items(.cube)[index];
         if (cube != NO_ROOM) {
             b.cubes.appendAssumeCapacity(.{
                 .translation = position,
                 .rotation = 0,
-                .color = darkenColor(b.slice.items(.color)[cube]),
+                .color_a = darkenColor(b.slice.items(.color)[cube][0]),
+                .color_b = darkenColor(b.slice.items(.color)[cube][1]),
             });
         }
     }
@@ -1211,7 +1453,8 @@ const InstanceBuilder = struct {
             b.walls.appendAssumeCapacity(.{
                 .translation = position,
                 .rotation = abs_rotation,
-                .color = b.slice.items(.color)[index],
+                .color_a = b.slice.items(.color)[index][0],
+                .color_b = b.slice.items(.color)[index][1],
             });
             return false;
         } else {
@@ -1219,13 +1462,15 @@ const InstanceBuilder = struct {
             b.doors.appendAssumeCapacity(.{
                 .translation = position,
                 .rotation = abs_rotation,
-                .color = darkenColor(next_color),
+                .color_a = darkenColor(next_color[0]),
+                .color_b = darkenColor(next_color[1]),
             });
             if (wallProxy) {
                 b.walls.appendAssumeCapacity(.{
                     .translation = position,
                     .rotation = abs_rotation,
-                    .color = next_color,
+                    .color_a = next_color[0],
+                    .color_b = next_color[1],
                 });
             }
             return true;

@@ -51,7 +51,7 @@ const deuteranopiaLms = mat3x3(
 const tritanopiaLms = mat3x3(
   1, 0, 0,
   0, 1, 0,
-  -0.03959, 0.08011, 0,
+  -0.3959, 0.8011, 0,
 );
 
 @fragment

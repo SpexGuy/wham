@@ -2,44 +2,60 @@ const main = @import("main.zig");
 const Room = main.Room;
 const NO_ROOM = main.NO_ROOM;
 
-const high_contrast = [3]u32{
-    0xFF33AADD, // yellow
-    0xFF6655BB, // red
-    0xFF884400, // blue
+fn double(color: u32) [2]u32 { return .{ color, color }; }
+fn grad_a(color: u32) [2]u32 {
+    if (comptime @import("builtin").cpu.arch.endian() != .Little)
+        @compileError("The following code assumes little endian");
+    const bytes = @bitCast([4]u8, color);
+    const rot = [4]u8{ bytes[1], bytes[2], bytes[0], bytes[3] };
+    return .{ color, @bitCast(u32, rot) };
+}
+fn grad_b(color: u32) [2]u32 {
+    if (comptime @import("builtin").cpu.arch.endian() != .Little)
+        @compileError("The following code assumes little endian");
+    const bytes = @bitCast([4]u8, color);
+    const rot = [4]u8{ bytes[2], bytes[0], bytes[1], bytes[3] };
+    return .{ color, @bitCast(u32, rot) };
+}
+
+const high_contrast = [3][2]u32{
+    double(0xFF33AADD), // yellow
+    double(0xFF6655BB), // red
+    double(0xFF884400), // blue
 };
 
-const bright = [6]u32{
-    0xFFAA7744, // blue
-    0xFFEECC66, // cyan
-    0xFF338822, // green
-    0xFF44BBCC, // yellow
-    0xFF7766EE, // red
-    0xFF7733AA, // purple
+const bright = [6][2]u32{
+    double(0xFFAA7744), // blue
+    double(0xFFEECC66), // cyan
+    grad_b(0xFF338822), // green
+    double(0xFF44BBCC), // yellow
+    double(0xFF7766EE), // red
+    grad_b(0xFF7733AA), // purple
 };
 
-const vibrant = [6]u32{
-    0xFFBB7700, // blue
-    0xFFEEBB33, // cyan
-    0xFF889900, // teal
-    0xFF3377EE, // orange
-    0xFF1133CC, // red
-    0xFF7733EE, // magenta
+const vibrant = [6][2]u32{
+    grad_b(0xFFBB7700), // blue
+    double(0xFFEEBB33), // cyan
+    double(0xFF889900), // teal
+    double(0xFF3377EE), // orange
+    double(0xFF1133CC), // red
+    double(0xFF7733EE), // magenta
 };
 
-const muted = [9]u32{
-    0xFF882233, // indigo
-    0xFFEECC88, // cyan
-    0xFF99AA44, // teal
-    0xFF337711, // green
-    0xFF339999, // olive
-    0xFF77CCDD, // sand
-    0xFF7766CC, // rose
-    0xFF552288, // wine
-    0xFF9944AA, // purple
+const muted = [9][2]u32{
+    grad_a(0xFF882233), // indigo
+    grad_a(0xFFEECC88), // cyan
+    grad_a(0xFF99AA44), // teal
+    grad_a(0xFF337711), // green
+    grad_a(0xFF339999), // olive
+    grad_a(0xFF77CCDD), // sand
+    grad_b(0xFF7766CC), // rose
+    grad_a(0xFF552288), // wine
+    grad_a(0xFF9944AA), // purple
 };
 
 
-const l0_colors = [2]u32{
+const l0_colors = [2][2]u32{
     high_contrast[1],
     high_contrast[2],
 };
@@ -100,45 +116,50 @@ const level_1 = [_]Room{
     },
 };
 
-const l4_colors = bright[0..4];
-const level_4 = [_]Room{
+const l2_colors = [4][2]u32{
+    bright[0],
+    bright[2],
+    bright[4],
+    bright[5],
+};
+const level_2 = [_]Room{
     .{
-        .color = l4_colors[0],
+        .color = l2_colors[0],
         .edges = .{
-            .{ .to_room = NO_ROOM, .in_dir = 0 },
-            .{ .to_room = 0, .in_dir = 1 },
-            .{ .to_room = 2, .in_dir = 2 },
-            .{ .to_room = 0, .in_dir = 0 },
+            .{ .to_room = 3, .in_dir = 0 },
+            .{ .to_room = 3, .in_dir = 0 },
+            .{ .to_room = 1, .in_dir = 3 },
+            .{ .to_room = 3, .in_dir = 0 },
         },
         .cube = 1,
     },
     .{
-        .color = l4_colors[1],
+        .color = l2_colors[1],
         .edges = .{
-            .{ .to_room = 2, .in_dir = 0 },
-            .{ .to_room = 1, .in_dir = 1 },
-            .{ .to_room = 3, .in_dir = 2 },
-            .{ .to_room = 1, .in_dir = 0 },
+            .{ .to_room = 0, .in_dir = 0 },
+            .{ .to_room = 2, .in_dir = 2 },
+            .{ .to_room = 0, .in_dir = 0 },
+            .{ .to_room = 3, .in_dir = 0 },
         },
         .cube = 2,
     },
     .{
-        .color = l4_colors[2],
+        .color = l2_colors[2],
         .edges = .{
-            .{ .to_room = 3, .in_dir = 0 },
-            .{ .to_room = 2, .in_dir = 1 },
             .{ .to_room = 0, .in_dir = 2 },
-            .{ .to_room = 2, .in_dir = 0 },
+            .{ .to_room = 0, .in_dir = 1 },
+            .{ .to_room = 3, .in_dir = 1 },
+            .{ .to_room = 0, .in_dir = 3 },
         },
         .cube = 3,
     },
     .{
-        .color = l4_colors[3],
+        .color = l2_colors[3],
         .edges = .{
-            .{ .to_room = 0, .in_dir = 0 },
-            .{ .to_room = 3, .in_dir = 1 },
-            .{ .to_room = 1, .in_dir = 2 },
-            .{ .to_room = 3, .in_dir = 0 },
+            .{ .to_room = 1, .in_dir = 3 },
+            .{ .to_room = 3, .in_dir = 2 },
+            .{ .to_room = 1, .in_dir = 3 },
+            .{ .to_room = 1, .in_dir = 3 },
         },
         .cube = 0,
     },
@@ -193,6 +214,50 @@ const level_3 = [_]Room{
             .{ .to_room = NO_ROOM, .in_dir = 0 },
             .{ .to_room = 1, .in_dir = 0 },
             .{ .to_room = NO_ROOM, .in_dir = 0 },
+        },
+        .cube = 0,
+    },
+};
+
+const l4_colors = bright[0..4];
+const level_4 = [_]Room{
+    .{
+        .color = l4_colors[0],
+        .edges = .{
+            .{ .to_room = NO_ROOM, .in_dir = 0 },
+            .{ .to_room = 0, .in_dir = 1 },
+            .{ .to_room = 2, .in_dir = 2 },
+            .{ .to_room = 0, .in_dir = 0 },
+        },
+        .cube = 1,
+    },
+    .{
+        .color = l4_colors[1],
+        .edges = .{
+            .{ .to_room = 2, .in_dir = 0 },
+            .{ .to_room = 1, .in_dir = 1 },
+            .{ .to_room = 3, .in_dir = 2 },
+            .{ .to_room = 1, .in_dir = 0 },
+        },
+        .cube = 2,
+    },
+    .{
+        .color = l4_colors[2],
+        .edges = .{
+            .{ .to_room = 3, .in_dir = 0 },
+            .{ .to_room = 2, .in_dir = 1 },
+            .{ .to_room = 0, .in_dir = 2 },
+            .{ .to_room = 2, .in_dir = 0 },
+        },
+        .cube = 3,
+    },
+    .{
+        .color = l4_colors[3],
+        .edges = .{
+            .{ .to_room = 0, .in_dir = 0 },
+            .{ .to_room = 3, .in_dir = 1 },
+            .{ .to_room = 1, .in_dir = 2 },
+            .{ .to_room = 3, .in_dir = 0 },
         },
         .cube = 0,
     },
@@ -277,55 +342,6 @@ const level_5 = [_]Room{
             .{ .to_room = 3, .in_dir = 3 },
             .{ .to_room = NO_ROOM, .in_dir = 0 },
             .{ .to_room = NO_ROOM, .in_dir = 0 },
-        },
-        .cube = 0,
-    },
-};
-
-const l2_colors = [4]u32{
-    bright[0],
-    bright[2],
-    bright[4],
-    bright[5],
-};
-const level_2 = [_]Room{
-    .{
-        .color = l2_colors[0],
-        .edges = .{
-            .{ .to_room = 3, .in_dir = 0 },
-            .{ .to_room = 3, .in_dir = 0 },
-            .{ .to_room = 1, .in_dir = 3 },
-            .{ .to_room = 3, .in_dir = 0 },
-        },
-        .cube = 1,
-    },
-    .{
-        .color = l2_colors[1],
-        .edges = .{
-            .{ .to_room = 0, .in_dir = 0 },
-            .{ .to_room = 2, .in_dir = 2 },
-            .{ .to_room = 0, .in_dir = 0 },
-            .{ .to_room = 3, .in_dir = 0 },
-        },
-        .cube = 2,
-    },
-    .{
-        .color = l2_colors[2],
-        .edges = .{
-            .{ .to_room = 0, .in_dir = 2 },
-            .{ .to_room = 0, .in_dir = 1 },
-            .{ .to_room = 3, .in_dir = 1 },
-            .{ .to_room = 0, .in_dir = 3 },
-        },
-        .cube = 3,
-    },
-    .{
-        .color = l2_colors[3],
-        .edges = .{
-            .{ .to_room = 1, .in_dir = 3 },
-            .{ .to_room = 3, .in_dir = 2 },
-            .{ .to_room = 1, .in_dir = 3 },
-            .{ .to_room = 1, .in_dir = 3 },
         },
         .cube = 0,
     },
