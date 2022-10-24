@@ -193,24 +193,21 @@ pub const Plane2 = struct {
     }
 };
 
-pub fn calcOffsetScale(x_range: [2]f32, y_range: [2]f32) Vec {
+pub fn calcOffsetScale(range: [2]f32) Vec {
     // let diff = range[1] - range[0]
     // (x - range[0]) / diff = [0..1]
     // x / diff - range[0] / diff = [0..1]
     // x * 1/diff + (range[0] * 1/diff) = [0..1]
     // bake values for a single madd on gpu
-    const x_diff = x_range[1] - x_range[0];
-    const y_diff = y_range[1] - y_range[0];
-    const scale = 1.0/(x_diff + y_diff);
-    const x_offset = -x_range[0] * scale;
-    const y_offset = -y_range[0] * scale;
-    return .{ x_offset, scale, y_offset, scale };
+    const diff = range[1] - range[0];
+    const scale = 1.0/diff;
+    const offset = -range[0] * scale;
+    return .{ offset, scale, 0, 0 };
 }
 
 pub fn makeOffsetScale(plane: Plane2, aabb: AABB, rotation: u2, translation: [2]f32) Vec {
-    const x_range = plane.projectOffsetAabb(aabb.rotatedXZ(rotation), translation);
-    const y_range = [2]f32{ aabb.min[1], aabb.max[1] };
-    return calcOffsetScale(x_range, y_range);
+    const range = plane.projectOffsetAabb(aabb.rotatedXZ(rotation), translation);
+    return calcOffsetScale(range);
 }
 
 fn calculateBoxes(plane: Plane2, aabb: AABB, instances: []InstanceAttrs) void {
@@ -651,6 +648,7 @@ fn loadLevelSelect(app: *App) void {
 }
 
 fn loadLevel(app: *App, index: usize) void {
+    app.current_level = index;
     app.level_rotates_colors = index >= 5;
     app.map.shrinkRetainingCapacity(0);
     app.map.ensureTotalCapacity(gpa, levels[index].len) catch @panic("Out of memory!");
@@ -1105,7 +1103,6 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
             next_level_id = 0;
             app.last_level_complete = true;
         }
-        app.current_level = next_level_id;
 
         app.loadLevelSelect();
         const transition_room = @intCast(u30, next_level_id);
@@ -1210,9 +1207,6 @@ fn updateHeldObjectUniforms(app: *App, queue: *gpu.Queue) void {
         .blend_offset_scale = calcOffsetScale(.{
             projected_pos + aabb.min[2] * held_scale,
             projected_pos + aabb.max[2] * held_scale,
-        }, .{
-            dims.held_height + aabb.min[1] * held_scale,
-            dims.held_height + aabb.max[1] * held_scale,
         }),
     };
     queue.writeBuffer(app.held_object_uniform_buffer, 0, std.mem.asBytes(&uniforms));
@@ -1449,7 +1443,7 @@ const InstanceBuilder = struct {
             });
         }
         if (b.slice.items(.type)[index] == .normal) {
-            const seat_color = if (cube == index) room_color else [2]u32{0,0};
+            const seat_color = if (cube == index) [2]u32{0xFFFFFFFF, 0xFFFFFFFF} else [2]u32{0,0};
             b.seats.appendAssumeCapacity(.{
                 .translation = position,
                 .rotation = 0,

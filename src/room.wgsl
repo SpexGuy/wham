@@ -24,7 +24,6 @@ struct ScreenspaceInterpolators {
   @location(0) color_a: vec3<f32>,
   @location(1) color_b: vec3<f32>,
   @location(2) depth: f32,
-  @location(3) blend_y: f32,
   // This definition is repeated in ScreenspaceVertexOut, don't forget to modify both.
 };
 
@@ -42,7 +41,6 @@ struct ScreenspaceVertexOut {
   @location(0) color_a: vec3<f32>,
   @location(1) color_b: vec3<f32>,
   @location(2) depth: f32,
-  @location(3) blend_y: f32,
   @builtin(position) position: vec4<f32>,
 }
 
@@ -76,10 +74,7 @@ fn transform_instance_vertex(
 fn calculate_aabb_blend(blend_offset_scale: vec4<f32>, position: vec3<f32>) -> f32 {
   let across = vec3<f32>(-view.forward.y, 0, view.forward.x);
   let along = dot(across, position);
-  let above = position.y;
-  let blend_x = blend_offset_scale.y * along + blend_offset_scale.x;
-  let blend_y = blend_offset_scale.w * above + blend_offset_scale.z;
-  return saturate(blend_x + blend_y);
+  return saturate(blend_offset_scale.y * along + blend_offset_scale.x);
 }
 
 // The WGSL spec calls this out as a builtin but apparently it isn't
@@ -121,7 +116,6 @@ fn instanced_vert_main_screenspace(
   result.color_a = a_color_a.rgb;
   result.color_b = a_color_b.rgb;
   result.depth = result.position.w;
-  result.blend_y = a_blend_offset_scale.w * world_pos.y + a_blend_offset_scale.z;
   return result;
 }
 
@@ -143,8 +137,7 @@ fn frag_main_screenspace(
   @builtin(position) device_pos : vec4<f32>,
   inputs: ScreenspaceInterpolators,
 ) -> @location(0) vec4<f32> {
-  let blend_x = device_pos.x * view.inv_screen_size.x;
-  let blend = saturate(inputs.blend_y + blend_x * 0.5);
+  let blend = device_pos.x * view.inv_screen_size.x;
   let color = mix(inputs.color_a, inputs.color_b, blend);
   let brightness = 1.0 - smoothstep(-0.8, 4.0, inputs.depth);
   return vec4<f32>(vec3<f32>(brightness) * color, 1.0);
