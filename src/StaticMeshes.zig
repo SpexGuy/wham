@@ -26,10 +26,11 @@ room: MeshChunk,
 wall: MeshChunk,
 door: MeshChunk,
 cube: MeshChunk,
+seat: MeshChunk,
 
 pub fn init(meshes: *StaticMeshes, device: *gpu.Device, queue: *gpu.Queue) void {
     // zig fmt: off
-    const room_verts = [6*4][3]f32{
+    const room_wall_verts = [6*4][3]f32{
         .{ -dims.door_width, 0, -dims.room_width },
         .{ -dims.door_width, dims.door_height, -dims.room_width },
         .{  dims.door_width, dims.door_height, -dims.room_width },
@@ -133,8 +134,29 @@ pub fn init(meshes: *StaticMeshes, device: *gpu.Device, queue: *gpu.Queue) void 
         .max = .{ dims.room_width, dims.door_height + dims.frame_depth, dims.door_width + dims.frame_depth },
     };
 
+    const seat_verts = [_][3]f32{
+        .{ -dims.cube_width - dims.seat_width, 0              , -dims.cube_width - dims.seat_width },
+        .{ -dims.cube_width - dims.seat_width, dims.seat_width, -dims.cube_width - dims.seat_width },
+        .{ -dims.cube_width                  , dims.seat_width, -dims.cube_width                   },
+        .{ -dims.cube_width                  , 0              , -dims.cube_width                   },
 
-    const door_indices = [_]u16{
+        .{ dims.cube_width + dims.seat_width, 0              , -dims.cube_width - dims.seat_width },
+        .{ dims.cube_width + dims.seat_width, dims.seat_width, -dims.cube_width - dims.seat_width },
+        .{ dims.cube_width                  , dims.seat_width, -dims.cube_width                   },
+        .{ dims.cube_width                  , 0              , -dims.cube_width                   },
+
+        .{ dims.cube_width + dims.seat_width, 0              , dims.cube_width + dims.seat_width },
+        .{ dims.cube_width + dims.seat_width, dims.seat_width, dims.cube_width + dims.seat_width },
+        .{ dims.cube_width                  , dims.seat_width, dims.cube_width                   },
+        .{ dims.cube_width                  , 0              , dims.cube_width                   },
+
+        .{ -dims.cube_width - dims.seat_width, 0              , dims.cube_width + dims.seat_width },
+        .{ -dims.cube_width - dims.seat_width, dims.seat_width, dims.cube_width + dims.seat_width },
+        .{ -dims.cube_width                  , dims.seat_width, dims.cube_width                   },
+        .{ -dims.cube_width                  , 0              , dims.cube_width                   },
+    };
+
+    const door_seat_indices = [_]u16{
         4, 0, 1,
         1, 5, 4,
         5, 1, 2,
@@ -155,23 +177,34 @@ pub fn init(meshes: *StaticMeshes, device: *gpu.Device, queue: *gpu.Queue) void 
         10, 14, 13,
         14, 10, 11,
         11, 15, 14,
+
+        0, 12, 13,
+        13, 1, 0,
+        1, 13, 14,
+        14, 2, 1,
+        2, 14, 15,
+        15, 3, 2,
     };
 
     const cube_verts = [_][3]f32{
-        .{  0.05, 0.05,  0.05 },
-        .{ -0.05, 0.05,  0.05 },
-        .{ -0.05, 0.0 ,  0.05 },
-        .{  0.05, 0.0 ,  0.05 },
-        .{  0.05, 0.0 , -0.05 },
-        .{ -0.05, 0.0 , -0.05 },
-        .{ -0.05, 0.05, -0.05 },
-        .{  0.05, 0.05, -0.05 },
+        .{  dims.cube_width, dims.cube_width,  dims.cube_width },
+        .{ -dims.cube_width, dims.cube_width,  dims.cube_width },
+        .{ -dims.cube_width, 0.0 ,  dims.cube_width },
+        .{  dims.cube_width, 0.0 ,  dims.cube_width },
+        .{  dims.cube_width, 0.0 , -dims.cube_width },
+        .{ -dims.cube_width, 0.0 , -dims.cube_width },
+        .{ -dims.cube_width, dims.cube_width, -dims.cube_width },
+        .{  dims.cube_width, dims.cube_width, -dims.cube_width },
     };
 
     const cube_aabb = main.AABB{
-        .min = .{ -0.05, 0.0 , -0.05 },
-        .max = .{  0.05, 0.05,  0.05 },
+        .min = .{ -dims.cube_width, 0.0 , -dims.cube_width },
+        .max = .{  dims.cube_width, dims.cube_width,  dims.cube_width },
     };
+    // This is not quite correct, but it looks weird if gradients are discontinuous
+    // between seats and cubes since flat colors are continuous.  To account for this,
+    // the shader saturates the aabb comparison.
+    const seat_aabb = cube_aabb;
 
     const cube_indices = [_]u16{
         0, 1, 2,
@@ -199,13 +232,16 @@ pub fn init(meshes: *StaticMeshes, device: *gpu.Device, queue: *gpu.Queue) void 
     const room_vertex_offset = buffer_size;
     const room_base_vertex = @divExact(buffer_size, @sizeOf([3]f32));
     const wall_base_vertex = room_base_vertex;
-    buffer_size += @sizeOf(@TypeOf(room_verts));
+    buffer_size += @sizeOf(@TypeOf(room_wall_verts));
     const door_vertex_offset = buffer_size;
     const door_base_vertex = @divExact(buffer_size, @sizeOf([3]f32));
     buffer_size += @sizeOf(@TypeOf(door_verts));
     const cube_vertex_offset = buffer_size;
     const cube_base_vertex = @divExact(buffer_size, @sizeOf([3]f32));
     buffer_size += @sizeOf(@TypeOf(cube_verts));
+    const seat_vertex_offset = buffer_size;
+    const seat_base_vertex = @divExact(buffer_size, @sizeOf([3]f32));
+    buffer_size += @sizeOf(@TypeOf(seat_verts));
     const mesh_vertices_size = buffer_size;
 
     var index_offset: u32 = 0;
@@ -220,8 +256,9 @@ pub fn init(meshes: *StaticMeshes, device: *gpu.Device, queue: *gpu.Queue) void 
     index_offset += @intCast(u32, wall_indices.len);
     const door_indices_offset = buffer_size;
     const door_base_index = index_offset;
-    buffer_size += @sizeOf(@TypeOf(door_indices));
-    index_offset += @intCast(u32, door_indices.len);
+    const seat_base_index = index_offset;
+    buffer_size += @sizeOf(@TypeOf(door_seat_indices));
+    index_offset += @intCast(u32, door_seat_indices.len);
     const cube_indices_offset = buffer_size;
     const cube_base_index = index_offset;
     buffer_size += @sizeOf(@TypeOf(cube_indices));
@@ -233,14 +270,16 @@ pub fn init(meshes: *StaticMeshes, device: *gpu.Device, queue: *gpu.Queue) void 
         .usage = .{ .copy_dst = true, .vertex = true, .index = true },
         .size = buffer_size,
     });
-    queue.writeBuffer(mesh_buffer, room_vertex_offset, &room_verts);
+    queue.writeBuffer(mesh_buffer, room_vertex_offset, &room_wall_verts);
     queue.writeBuffer(mesh_buffer, door_vertex_offset, &door_verts);
     queue.writeBuffer(mesh_buffer, cube_vertex_offset, &cube_verts);
+    queue.writeBuffer(mesh_buffer, seat_vertex_offset, &seat_verts);
     queue.writeBuffer(mesh_buffer, room_indices_offset, &room_indices);
     queue.writeBuffer(mesh_buffer, wall_indices_offset, &wall_indices);
-    queue.writeBuffer(mesh_buffer, door_indices_offset, &door_indices);
+    queue.writeBuffer(mesh_buffer, door_indices_offset, &door_seat_indices);
     queue.writeBuffer(mesh_buffer, cube_indices_offset, &cube_indices);
 
+    if (door_seat_indices.len != 6*3*4) @compileError("Update door and seat index counts below");
     meshes.* = .{
         .mesh_buffer = mesh_buffer,
         .mesh_vertex_offset = 0,
@@ -263,7 +302,7 @@ pub fn init(meshes: *StaticMeshes, device: *gpu.Device, queue: *gpu.Queue) void 
         .door = .{
             .base_vertex = @intCast(i32, door_base_vertex),
             .base_index = door_base_index,
-            .indices_count = door_indices.len,
+            .indices_count = 6*3*3,
             .aabb = door_aabb,
         },
         .cube = .{
@@ -271,6 +310,12 @@ pub fn init(meshes: *StaticMeshes, device: *gpu.Device, queue: *gpu.Queue) void 
             .base_index = cube_base_index,
             .indices_count = cube_indices.len,
             .aabb = cube_aabb,
+        },
+        .seat = .{
+            .base_vertex = @intCast(i32, seat_base_vertex),
+            .base_index = seat_base_index,
+            .indices_count = 6*3*4,
+            .aabb = seat_aabb,
         },
     };
 }

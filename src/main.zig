@@ -84,6 +84,8 @@ door_instance_offset: u32 = 0,
 num_visible_doors: u32 = 0,
 cube_instance_offset: u32 = 0,
 num_visible_cubes: u32 = 0,
+seat_instance_offset: u32 = 0,
+num_visible_seats: u32 = 0,
 total_instances: u32 = 0,
 
 current_room: u30 = 0,
@@ -211,6 +213,12 @@ pub fn makeOffsetScale(plane: Plane2, aabb: AABB, rotation: u2, translation: [2]
     return calcOffsetScale(x_range, y_range);
 }
 
+fn calculateBoxes(plane: Plane2, aabb: AABB, instances: []InstanceAttrs) void {
+    for (instances) |*inst| {
+        inst.offset_scale = makeOffsetScale(plane, aabb, @intCast(u2, inst.rotation), inst.translation);
+    }
+}
+
 const FrameInputs = struct {
     mouse_dx: f32 = 0,
     mouse_dy: f32 = 0,
@@ -240,7 +248,8 @@ const MAX_ROOMS = 120;
 const MAX_DOORS = MAX_ROOMS + 20;
 const MAX_WALLS = 20;
 const MAX_CUBES = MAX_ROOMS;
-const MAX_INSTANCES = MAX_ROOMS + MAX_WALLS + MAX_DOORS + MAX_CUBES;
+const MAX_SEATS = MAX_CUBES;
+const MAX_INSTANCES = MAX_ROOMS + MAX_WALLS + MAX_DOORS + MAX_CUBES + MAX_SEATS;
 
 const MSAA_COUNT = 4;
 
@@ -770,6 +779,7 @@ pub fn update(app: *App, core: *mach.Core) !void {
         pass.setPipeline(app.instanced_pipeline_aabb);
         app.meshes.door.draw(pass, app.num_visible_doors, app.door_instance_offset);
         app.meshes.cube.draw(pass, app.num_visible_cubes, app.cube_instance_offset);
+        app.meshes.seat.draw(pass, app.num_visible_seats, app.seat_instance_offset);
 
         if (app.held_cube != NO_ROOM) {
             pass.setPipeline(app.object_pipeline);
@@ -1300,30 +1310,11 @@ fn updateInstances(app: *App, queue: *gpu.Queue) void {
     const facing_plane = Plane2{
         .normal = .{ app.forward_dir[0], app.forward_dir[2] },
     };
-    {
-        const aabb = app.meshes.room.aabb;
-        for (b.rooms.slice()) |*inst| {
-            inst.offset_scale = makeOffsetScale(facing_plane, aabb, @intCast(u2, inst.rotation), inst.translation);
-        }
-    }
-    {
-        const aabb = app.meshes.wall.aabb;
-        for (b.walls.slice()) |*inst| {
-            inst.offset_scale = makeOffsetScale(facing_plane, aabb, @intCast(u2, inst.rotation), inst.translation);
-        }
-    }
-    {
-        const aabb = app.meshes.door.aabb;
-        for (b.doors.slice()) |*inst| {
-            inst.offset_scale = makeOffsetScale(facing_plane, aabb, @intCast(u2, inst.rotation), inst.translation);
-        }
-    }
-    {
-        const aabb = app.meshes.cube.aabb;
-        for (b.cubes.slice()) |*inst| {
-            inst.offset_scale = makeOffsetScale(facing_plane, aabb, @intCast(u2, inst.rotation), inst.translation);
-        }
-    }
+    calculateBoxes(facing_plane, app.meshes.room.aabb, b.rooms.slice());
+    calculateBoxes(facing_plane, app.meshes.wall.aabb, b.walls.slice());
+    calculateBoxes(facing_plane, app.meshes.door.aabb, b.doors.slice());
+    calculateBoxes(facing_plane, app.meshes.cube.aabb, b.cubes.slice());
+    calculateBoxes(facing_plane, app.meshes.seat.aabb, b.seats.slice());
 
     // Upload streamed instance data to the gpu
     var total_instances: u32 = 0;
@@ -1347,6 +1338,11 @@ fn updateInstances(app: *App, queue: *gpu.Queue) void {
     queue.writeBuffer(app.instance_list, total_instances * @sizeOf(InstanceAttrs), b.cubes.slice());
     total_instances += @intCast(u32, b.cubes.len);
 
+    app.seat_instance_offset = total_instances;
+    app.num_visible_seats = @intCast(u32, b.seats.len);
+    queue.writeBuffer(app.instance_list, total_instances * @sizeOf(InstanceAttrs), b.seats.slice());
+    total_instances += @intCast(u32, b.seats.len);
+
     app.total_instances = total_instances;
 }
 
@@ -1364,6 +1360,7 @@ const InstanceBuilder = struct {
     doors: std.BoundedArray(InstanceAttrs, MAX_DOORS) = .{},
     walls: std.BoundedArray(InstanceAttrs, MAX_WALLS) = .{},
     cubes: std.BoundedArray(InstanceAttrs, MAX_CUBES) = .{},
+    seats: std.BoundedArray(InstanceAttrs, MAX_SEATS) = .{},
 
     fn addSpineInstances(b: *InstanceBuilder, app: *App, facing_dir: u2, limit: u32) void {
         const edges = b.slice.items(.edges);
@@ -1435,11 +1432,12 @@ const InstanceBuilder = struct {
     }
 
     fn addRoom(b: *InstanceBuilder, index: u30, position: [2]f32) void {
+        const room_color = b.slice.items(.color)[index];
         b.rooms.appendAssumeCapacity(.{
             .translation = position,
             .rotation = 0,
-            .color_a = b.slice.items(.color)[index][0],
-            .color_b = b.slice.items(.color)[index][1],
+            .color_a = room_color[0],
+            .color_b = room_color[1],
         });
         const cube = b.slice.items(.cube)[index];
         if (cube != NO_ROOM) {
@@ -1448,6 +1446,15 @@ const InstanceBuilder = struct {
                 .rotation = 0,
                 .color_a = darkenColor(b.slice.items(.color)[cube][0]),
                 .color_b = darkenColor(b.slice.items(.color)[cube][1]),
+            });
+        }
+        if (b.slice.items(.type)[index] == .normal) {
+            const seat_color = if (cube == index) room_color else [2]u32{0,0};
+            b.seats.appendAssumeCapacity(.{
+                .translation = position,
+                .rotation = 0,
+                .color_a = darkenColor(seat_color[0]),
+                .color_b = darkenColor(seat_color[1]),
             });
         }
     }

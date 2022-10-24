@@ -79,7 +79,13 @@ fn calculate_aabb_blend(blend_offset_scale: vec4<f32>, position: vec3<f32>) -> f
   let above = position.y;
   let blend_x = blend_offset_scale.y * along + blend_offset_scale.x;
   let blend_y = blend_offset_scale.w * above + blend_offset_scale.z;
-  return blend_x + blend_y;
+  return saturate(blend_x + blend_y);
+}
+
+// The WGSL spec calls this out as a builtin but apparently it isn't
+// implemented in this driver? Maybe it needs an update.
+fn saturate(value: f32) -> f32 {
+  return clamp(value, 0.0, 1.0);
 }
 
 @vertex
@@ -138,7 +144,7 @@ fn frag_main_screenspace(
   inputs: ScreenspaceInterpolators,
 ) -> @location(0) vec4<f32> {
   let blend_x = device_pos.x * view.inv_screen_size.x;
-  let blend = inputs.blend_y + blend_x * 0.5;
+  let blend = saturate(inputs.blend_y + blend_x * 0.5);
   let color = mix(inputs.color_a, inputs.color_b, blend);
   let brightness = 1.0 - smoothstep(-0.8, 4.0, inputs.depth);
   return vec4<f32>(vec3<f32>(brightness) * color, 1.0);

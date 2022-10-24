@@ -9,3 +9,5 @@ pub const collision_tolerance = 0.03;
 pub const frame_depth = 0.015;
 pub const player_height = 0.26;
 pub const held_height = 0.18;
+pub const cube_width = 0.05;
+pub const seat_width = 0.01;
