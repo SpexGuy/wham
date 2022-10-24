@@ -854,7 +854,7 @@ fn updateInputState(app: *App, core: *mach.Core) FrameInputs {
                 .p => if (allow_debug_commands) {
                     inputs.colorblind_change = 1;
                 },
-                .f => {
+                .f => if (allow_debug_commands) {
                     inputs.color_rotation = true;
                 },
                 .l => if (allow_debug_commands) {
@@ -1443,7 +1443,7 @@ const InstanceBuilder = struct {
             });
         }
         if (b.slice.items(.type)[index] == .normal) {
-            const seat_color = if (cube == index) [2]u32{0xFFFFFFFF, 0xFFFFFFFF} else [2]u32{0,0};
+            const seat_color = if (cube == index) [2]u32{0xFFEFEFEF, 0xFFEFEFEF} else [2]u32{0,0};
             b.seats.appendAssumeCapacity(.{
                 .translation = position,
                 .rotation = 0,
