@@ -919,6 +919,7 @@ fn updateInputState(app: *App, core: *mach.Core) FrameInputs {
 
 fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
     var should_check_solved = false;
+    var moving_backwards = false;
 
     const theta = app.yaw_turns * tau;
     const phi = app.pitch_turns * tau;
@@ -930,8 +931,8 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
     const delta_time = std.math.min(raw_delta_time, 0.2);
 
     if (app.game_mode != .startup) {
-        app.yaw_turns += inputs.mouse_dx / 1000;
-        app.pitch_turns -= inputs.mouse_dy / 1000;
+        app.yaw_turns += inputs.mouse_dx / 2000;
+        app.pitch_turns -= inputs.mouse_dy / 2000;
 
         app.yaw_turns = @mod(app.yaw_turns, 1.0);
         app.pitch_turns = std.math.clamp(app.pitch_turns, -0.249, 0.249);
@@ -949,6 +950,7 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
             app.player_pos += app.forward_dir * vec_move_speed;
         } else if (inputs.keys & Dir.down != 0) {
             app.player_pos -= app.forward_dir * vec_move_speed;
+            moving_backwards = true;
         }
     } else {
         app.player_pos += app.forward_dir * @splat(4, delta_time * dims.startup_glide_speed);
@@ -975,7 +977,8 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
     if (app.player_pos[0] > dims.room_width - dims.collision_tolerance) {
         // Check if they are in the door area
         if (abs(app.player_pos[2]) < dims.door_width - dims.collision_tolerance and
-            edges[app.current_rotation +% 0].to_room != NO_ROOM) {
+            edges[app.current_rotation +% 0].to_room != NO_ROOM and
+            !moving_backwards) {
             // In the door, check for transfer to next room
             if (app.player_pos[0] > dims.room_width + dims.collision_tolerance) {
                 app.player_pos[0] -= 2 * dims.room_width;
@@ -989,7 +992,8 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
     if (app.player_pos[2] < -dims.room_width + dims.collision_tolerance) {
         // Check if they are in the door area
         if (abs(app.player_pos[0]) < dims.door_width - dims.collision_tolerance and
-            edges[app.current_rotation +% 1].to_room != NO_ROOM) {
+            edges[app.current_rotation +% 1].to_room != NO_ROOM and
+            !moving_backwards) {
             // In the door, check for transfer to next room
             if (app.player_pos[2] < -dims.room_width - dims.collision_tolerance) {
                 app.player_pos[2] += 2 * dims.room_width;
@@ -1003,7 +1007,8 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
     if (app.player_pos[0] < -dims.room_width + dims.collision_tolerance) {
         // Check if they are in the door area
         if (abs(app.player_pos[2]) < dims.door_width - dims.collision_tolerance and
-            edges[app.current_rotation +% 2].to_room != NO_ROOM) {
+            edges[app.current_rotation +% 2].to_room != NO_ROOM and
+            !moving_backwards) {
             // In the door, check for transfer to next room
             if (app.player_pos[0] < -dims.room_width - dims.collision_tolerance) {
                 app.player_pos[0] += 2 * dims.room_width;
@@ -1017,7 +1022,8 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
     if (app.player_pos[2] > dims.room_width - dims.collision_tolerance) {
         // Check if they are in the door area
         if (abs(app.player_pos[0]) < dims.door_width - dims.collision_tolerance and
-            edges[app.current_rotation +% 3].to_room != NO_ROOM) {
+            edges[app.current_rotation +% 3].to_room != NO_ROOM and
+            !moving_backwards) {
             // In the door, check for transfer to next room
             if (app.player_pos[2] > dims.room_width + dims.collision_tolerance) {
                 app.player_pos[2] -= 2 * dims.room_width;
