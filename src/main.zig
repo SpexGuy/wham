@@ -596,6 +596,7 @@ pub fn deinit(_: *App, _: *mach.Core) void {}
 fn loadLevelSelect(app: *App) void {
     app.level_select_brightness = 0.0;
     app.level_rotates_colors = false;
+    app.target_color_rotation = 0;
     app.map.shrinkRetainingCapacity(0);
     var total_len = levels.len; // select rooms
     for (levels) |l| total_len += l.len; // level rooms
