@@ -6,7 +6,7 @@ const levels = @import("levels.zig").levels;
 const dims = @import("dimensions.zig");
 const StaticMeshes = @import("StaticMeshes.zig");
 
-const allow_debug_commands = false;
+var allow_debug_commands = false;
 
 const Vec = zm.Vec;
 const Mat = zm.Mat;
@@ -862,6 +862,9 @@ fn updateInputState(app: *App, core: *mach.Core) FrameInputs {
                 },
                 .k => if (allow_debug_commands) {
                     app.last_level_complete = false;
+                },
+                .m => if (app.last_keys & Dir.shift != 0) {
+                    allow_debug_commands = !allow_debug_commands;
                 },
                 else => {},
             },
