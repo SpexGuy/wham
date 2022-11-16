@@ -19,27 +19,27 @@ fn grad_b(color: u32) [2]u32 {
 }
 
 const high_contrast = [3][2]u32{
-    double(0xFF33AADD), // yellow
-    double(0xFF6655BB), // red
-    double(0xFF884400), // blue
+    grad_a(0xFF33AADD), // yellow
+    grad_b(0xFF6655BB), // red
+    grad_a(0xFF884400), // blue
 };
 
 const bright = [6][2]u32{
-    double(0xFFAA7744), // blue
-    double(0xFFEECC66), // cyan
+    grad_a(0xFFAA7744), // blue
+    grad_b(0xFFEECC66), // cyan
     grad_b(0xFF338822), // green
-    double(0xFF44BBCC), // yellow
-    double(0xFF7766EE), // red
+    grad_a(0xFF44BBCC), // yellow
+    grad_b(0xFF7766EE), // red
     grad_b(0xFF7733AA), // purple
 };
 
 const vibrant = [6][2]u32{
     grad_b(0xFFBB7700), // blue
-    double(0xFFEEBB33), // cyan
-    double(0xFF889900), // teal
-    double(0xFF3377EE), // orange
-    double(0xFF1133CC), // red
-    double(0xFF7733EE), // magenta
+    grad_a(0xFFEEBB33), // cyan
+    grad_a(0xFF889900), // teal
+    grad_a(0xFF3377EE), // orange
+    grad_a(0xFF1133CC), // red
+    grad_a(0xFF7733EE), // magenta
 };
 
 const muted = [9][2]u32{
@@ -63,20 +63,20 @@ const level_0 = [_]Room{
     .{
         .color = l0_colors[0],
         .edges = .{
-            .{ .to_room = 1, .in_dir = 0 },
-            .{ .to_room = 0, .in_dir = 1 },
-            .{ .to_room = 1, .in_dir = 2 },
-            .{ .to_room = 0, .in_dir = 3 },
+            .{ .to_room = 0, .in_dir = 0 },
+            .{ .to_room = 1, .in_dir = 1 },
+            .{ .to_room = 0, .in_dir = 2 },
+            .{ .to_room = 1, .in_dir = 3 },
         },
         .cube = 1,
     },
     .{
         .color = l0_colors[1],
         .edges = .{
-            .{ .to_room = 0, .in_dir = 0 },
-            .{ .to_room = 1, .in_dir = 1 },
-            .{ .to_room = 0, .in_dir = 2 },
-            .{ .to_room = 1, .in_dir = 3 },
+            .{ .to_room = 1, .in_dir = 0 },
+            .{ .to_room = 0, .in_dir = 1 },
+            .{ .to_room = 1, .in_dir = 2 },
+            .{ .to_room = 0, .in_dir = 3 },
         },
         .cube = 0,
     },
