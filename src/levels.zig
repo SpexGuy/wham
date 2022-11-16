@@ -17,28 +17,32 @@ fn grad_b(color: u32) [2]u32 {
     const rot = [4]u8{ bytes[2], bytes[0], bytes[1], bytes[3] };
     return .{ color, @bitCast(u32, rot) };
 }
+fn grad_c(color: u32) [2]u32 {
+    const a = grad_a(color);
+    return .{ a[1], a[0] };
+}
 
 const high_contrast = [3][2]u32{
     grad_a(0xFF33AADD), // yellow
-    grad_b(0xFF6655BB), // red
-    grad_a(0xFF884400), // blue
+    grad_b(0xFF884400), // blue
+    grad_a(0xFF6655BB), // red
 };
 
 const bright = [6][2]u32{
     grad_a(0xFFAA7744), // blue
     grad_b(0xFFEECC66), // cyan
-    grad_b(0xFF338822), // green
-    grad_a(0xFF44BBCC), // yellow
-    grad_b(0xFF7766EE), // red
+    grad_a(0xFF338822), // green
+    grad_b(0xFF44BBCC), // yellow
+    grad_a(0xFF7766EE), // red
     grad_b(0xFF7733AA), // purple
 };
 
 const vibrant = [6][2]u32{
     grad_b(0xFFBB7700), // blue
-    grad_a(0xFFEEBB33), // cyan
+    grad_c(0xFFEEBB33), // cyan
     grad_a(0xFF889900), // teal
     grad_a(0xFF3377EE), // orange
-    grad_a(0xFF1133CC), // red
+    grad_b(0xFF1133CC), // red
     grad_a(0xFF7733EE), // magenta
 };
 
@@ -118,9 +122,9 @@ const level_1 = [_]Room{
 
 const l2_colors = [4][2]u32{
     bright[0],
-    bright[2],
+    bright[1],
     bright[4],
-    bright[5],
+    bright[3],
 };
 const level_2 = [_]Room{
     .{
