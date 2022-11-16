@@ -23,18 +23,18 @@ fn grad_c(color: u32) [2]u32 {
 }
 
 const high_contrast = [3][2]u32{
-    grad_a(0xFF33AADD), // yellow
-    grad_b(0xFF884400), // blue
-    grad_a(0xFF6655BB), // red
+    double(0xFF22bbFF), // yellow
+    double(0xFFFF22bb), // purple
+    double(0xFFbbFF22), // cyan
 };
 
 const bright = [6][2]u32{
-    grad_a(0xFFAA7744), // blue
-    grad_b(0xFFEECC66), // cyan
-    grad_a(0xFF338822), // green
-    grad_b(0xFF44BBCC), // yellow
-    grad_a(0xFF7766EE), // red
-    grad_b(0xFF7733AA), // purple
+    double(0xFFAA7744), // blue
+    double(0xFFEECC66), // cyan
+    double(0xFF338822), // green
+    double(0xFF44BBCC), // yellow
+    double(0xFF7766EE), // red
+    double(0xFF7733AA), // purple
 };
 
 const vibrant = [6][2]u32{
