@@ -12,11 +12,22 @@ pub fn build(b: *std.build.Builder) void {
         .target = target,
         .deps = &[_]std.build.Pkg{
             .{ .name = "zmath", .source = .{ .path = "mach/examples/libs/zmath/src/zmath.zig" } },
+            .{ .name = "bfnt", .source = .{ .path = "font/bfnt.zig" } },
         },
     }) catch unreachable;
     app.setBuildMode(mode);
     app.link(.{}) catch unreachable;
     app.install();
+
+    const bake_exe = b.addExecutable("font_bake", "font/bake.zig");
+    bake_exe.addPackagePath("zigimg", "mach/examples/libs/zigimg/zigimg.zig");
+    bake_exe.setBuildMode(mode);
+
+    const bake_fonts = bake_exe.run();
+    bake_fonts.addArg("font/orbitron_32.fnt");
+
+    const bake = b.step("bake", "Bake assets");
+    bake.dependOn(&bake_fonts.step);
 
     const run_cmd = app.run() catch unreachable;
     run_cmd.dependOn(b.getInstallStep());
