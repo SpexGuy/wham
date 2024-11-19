@@ -1,4 +1,0 @@
-[submodule "mach"]
-	path = mach
-	url = https://github.com/SpexGuy/mach.git
-	branch = "wham"
