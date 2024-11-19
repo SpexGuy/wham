@@ -209,7 +209,7 @@ pub fn init(meshes: *StaticMeshes, device: *gpu.Device, queue: *gpu.Queue) void 
     const cube_indices = [_]u16{
         0, 1, 2,
         2, 3, 0,
-        
+
         4, 3, 2,
         2, 5, 4,
 
@@ -249,20 +249,20 @@ pub fn init(meshes: *StaticMeshes, device: *gpu.Device, queue: *gpu.Queue) void 
     const room_indices_offset = mesh_indices_offset;
     const room_base_index = index_offset;
     buffer_size += @sizeOf(@TypeOf(room_indices));
-    index_offset += @intCast(u32, room_indices.len);
+    index_offset += @intCast(room_indices.len);
     const wall_indices_offset = buffer_size;
     const wall_base_index = index_offset;
     buffer_size += @sizeOf(@TypeOf(wall_indices));
-    index_offset += @intCast(u32, wall_indices.len);
+    index_offset += @intCast(wall_indices.len);
     const door_indices_offset = buffer_size;
     const door_base_index = index_offset;
     const seat_base_index = index_offset;
     buffer_size += @sizeOf(@TypeOf(door_seat_indices));
-    index_offset += @intCast(u32, door_seat_indices.len);
+    index_offset += @intCast(door_seat_indices.len);
     const cube_indices_offset = buffer_size;
     const cube_base_index = index_offset;
     buffer_size += @sizeOf(@TypeOf(cube_indices));
-    index_offset += @intCast(u32, cube_indices.len);
+    index_offset += @intCast(cube_indices.len);
     const mesh_indices_size = buffer_size - mesh_indices_offset;
 
     const mesh_buffer = device.createBuffer(&gpu.Buffer.Descriptor{
@@ -279,7 +279,7 @@ pub fn init(meshes: *StaticMeshes, device: *gpu.Device, queue: *gpu.Queue) void 
     queue.writeBuffer(mesh_buffer, door_indices_offset, &door_seat_indices);
     queue.writeBuffer(mesh_buffer, cube_indices_offset, &cube_indices);
 
-    if (door_seat_indices.len != 6*3*4) @compileError("Update door and seat index counts below");
+    if (door_seat_indices.len != 6 * 3 * 4) @compileError("Update door and seat index counts below");
     meshes.* = .{
         .mesh_buffer = mesh_buffer,
         .mesh_vertex_offset = 0,
@@ -288,33 +288,33 @@ pub fn init(meshes: *StaticMeshes, device: *gpu.Device, queue: *gpu.Queue) void 
         .mesh_indices_size = mesh_indices_size,
 
         .room = .{
-            .base_vertex = @intCast(i32, room_base_vertex),
+            .base_vertex = @intCast(room_base_vertex),
             .base_index = room_base_index,
             .indices_count = room_indices.len,
             .aabb = room_aabb,
         },
         .wall = .{
-            .base_vertex = @intCast(i32, wall_base_vertex),
+            .base_vertex = @intCast(wall_base_vertex),
             .base_index = wall_base_index,
             .indices_count = wall_indices.len,
             .aabb = wall_aabb,
         },
         .door = .{
-            .base_vertex = @intCast(i32, door_base_vertex),
+            .base_vertex = @intCast(door_base_vertex),
             .base_index = door_base_index,
-            .indices_count = 6*3*3,
+            .indices_count = 6 * 3 * 3,
             .aabb = door_aabb,
         },
         .cube = .{
-            .base_vertex = @intCast(i32, cube_base_vertex),
+            .base_vertex = @intCast(cube_base_vertex),
             .base_index = cube_base_index,
             .indices_count = cube_indices.len,
             .aabb = cube_aabb,
         },
         .seat = .{
-            .base_vertex = @intCast(i32, seat_base_vertex),
+            .base_vertex = @intCast(seat_base_vertex),
             .base_index = seat_base_index,
-            .indices_count = 6*3*4,
+            .indices_count = 6 * 3 * 4,
             .aabb = seat_aabb,
         },
     };

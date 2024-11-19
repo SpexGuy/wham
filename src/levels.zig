@@ -2,20 +2,22 @@ const main = @import("main.zig");
 const Room = main.Room;
 const NO_ROOM = main.NO_ROOM;
 
-fn double(color: u32) [2]u32 { return .{ color, color }; }
+fn double(color: u32) [2]u32 {
+    return .{ color, color };
+}
 fn grad_a(color: u32) [2]u32 {
     if (comptime @import("builtin").cpu.arch.endian() != .Little)
         @compileError("The following code assumes little endian");
-    const bytes = @bitCast([4]u8, color);
+    const bytes: [4]u8 = @bitCast(color);
     const rot = [4]u8{ bytes[1], bytes[2], bytes[0], bytes[3] };
-    return .{ color, @bitCast(u32, rot) };
+    return .{ color, @bitCast(rot) };
 }
 fn grad_b(color: u32) [2]u32 {
     if (comptime @import("builtin").cpu.arch.endian() != .Little)
         @compileError("The following code assumes little endian");
-    const bytes = @bitCast([4]u8, color);
+    const bytes: [4]u8 = @bitCast(color);
     const rot = [4]u8{ bytes[2], bytes[0], bytes[1], bytes[3] };
-    return .{ color, @bitCast(u32, rot) };
+    return .{ color, @bitCast(rot) };
 }
 fn grad_c(color: u32) [2]u32 {
     const a = grad_a(color);
@@ -57,7 +59,6 @@ const muted = [9][2]u32{
     grad_a(0xFF552288), // wine
     grad_a(0xFF9944AA), // purple
 };
-
 
 const l0_colors = [2][2]u32{
     high_contrast[1],
@@ -351,7 +352,7 @@ const level_5 = [_]Room{
     },
 };
 
-pub const levels: []const []const Room = &[_][]const Room {
+pub const levels: []const []const Room = &[_][]const Room{
     &level_0,
     &level_1,
     &level_2,

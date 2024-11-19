@@ -8,7 +8,7 @@ const StaticMeshes = @import("StaticMeshes.zig");
 
 var allow_debug_commands = false;
 
-const Vec = zm.Vec;
+const Vec = @Vector(4, f32);
 const Mat = zm.Mat;
 const Quat = zm.Quat;
 const Size = mach.Size;
@@ -96,11 +96,11 @@ facing_dir: u2 = 0,
 
 held_cube: u30 = NO_ROOM,
 
-forward_dir: Vec = zm.f32x4(1,0,0,0),
-look_dir: Vec = zm.f32x4(1,0,0,0),
-right_dir: Vec = zm.f32x4(0,1,0,0),
+forward_dir: Vec = zm.f32x4(1, 0, 0, 0),
+look_dir: Vec = zm.f32x4(1, 0, 0, 0),
+right_dir: Vec = zm.f32x4(0, 1, 0, 0),
 
-player_pos: Vec = zm.f32x4(0,dims.player_height,0,0),
+player_pos: Vec = zm.f32x4(0, dims.player_height, 0, 0),
 
 level_select_brightness: f32 = 0.0,
 last_level_complete: bool = false,
@@ -115,7 +115,7 @@ pub const AABB = struct {
     max: [3]f32,
 
     pub const empty = AABB{
-        .min = .{  std.math.inf_f32,  std.math.inf_f32,  std.math.inf_f32 },
+        .min = .{ std.math.inf_f32, std.math.inf_f32, std.math.inf_f32 },
         .max = .{ -std.math.inf_f32, -std.math.inf_f32, -std.math.inf_f32 },
     };
 
@@ -183,7 +183,7 @@ pub const Plane2 = struct {
             min = std.math.min(min, along);
             max = std.math.max(max, along);
         }
-        return .{min, max};
+        return .{ min, max };
     }
 
     pub fn projectOffsetAabb(plane: Plane2, aabb: AABB, offset: [2]f32) [2]f32 {
@@ -200,7 +200,7 @@ pub fn calcOffsetScale(range: [2]f32) Vec {
     // x * 1/diff + (range[0] * 1/diff) = [0..1]
     // bake values for a single madd on gpu
     const diff = range[1] - range[0];
-    const scale = 1.0/diff;
+    const scale = 1.0 / diff;
     const offset = -range[0] * scale;
     return .{ offset, scale, 0, 0 };
 }
@@ -212,7 +212,7 @@ pub fn makeOffsetScale(plane: Plane2, aabb: AABB, rotation: u2, translation: [2]
 
 fn calculateBoxes(plane: Plane2, aabb: AABB, instances: []InstanceAttrs) void {
     for (instances) |*inst| {
-        inst.offset_scale = makeOffsetScale(plane, aabb, @intCast(u2, inst.rotation), inst.translation);
+        inst.offset_scale = makeOffsetScale(plane, aabb, @intCast(inst.rotation), inst.translation);
     }
 }
 
@@ -308,7 +308,7 @@ pub fn init(app: *App, core: *mach.Core) !void {
             gpu.BindGroupLayout.Entry.buffer(0, .{ .vertex = true, .fragment = true }, .uniform, false, @sizeOf(ViewUniforms)),
         },
     }));
-    
+
     const object_bindings_layout = core.device.createBindGroupLayout(&gpu.BindGroupLayout.Descriptor.init(.{
         .entries = &.{
             gpu.BindGroupLayout.Entry.buffer(0, .{ .vertex = true }, .uniform, false, @sizeOf(ObjectUniforms)),
@@ -606,10 +606,10 @@ fn loadLevelSelect(app: *App) void {
     std.debug.assert(levels.len & 1 == 0); // This layout only works with an even number of levels
 
     // Init the rooms
-    var level_start: u30 = @intCast(u30, levels.len);
-    for (levels) |level, i| {
-        var left_room: usize = if (i == 0) levels.len-1 else i-1;
-        var right_room: usize = if (i == levels.len-1) 0 else i+1;
+    var level_start: u30 = @intCast(levels.len);
+    for (levels, 0..) |level, i| {
+        var left_room: usize = if (i == 0) levels.len - 1 else i - 1;
+        var right_room: usize = if (i == levels.len - 1) 0 else i + 1;
         if (i & 1 == 1) {
             const tmp = right_room;
             right_room = left_room;
@@ -618,19 +618,19 @@ fn loadLevelSelect(app: *App) void {
 
         // Level select room
         app.map.set(i, .{
-            .color = .{0,0},
+            .color = .{ 0, 0 },
             .edges = .{
                 .{ .to_room = level_start, .in_dir = 0 },
-                .{ .to_room = @intCast(u30, right_room), .in_dir = 3 },
+                .{ .to_room = @intCast(right_room), .in_dir = 3 },
                 .{ .to_room = NO_ROOM, .in_dir = 0 },
-                .{ .to_room = @intCast(u30, left_room), .in_dir = 1 },
+                .{ .to_room = @intCast(left_room), .in_dir = 1 },
             },
             .cube = NO_ROOM,
             .type = .level_select,
         });
 
         // Game rooms
-        for (level) |room, room_id| {
+        for (level, 0..) |room, room_id| {
             app.map.set(level_start + room_id, .{
                 .color = room.color,
                 .edges = .{
@@ -644,7 +644,7 @@ fn loadLevelSelect(app: *App) void {
             });
         }
 
-        level_start += @intCast(u30, level.len);
+        level_start += @intCast(level.len);
     }
 }
 
@@ -752,13 +752,13 @@ pub fn update(app: *App, core: *mach.Core) !void {
     // Main pass
     {
         const pass = cb.beginRenderPass(&gpu.RenderPassDescriptor.init(.{
-            .color_attachments = &[_]gpu.RenderPassColorAttachment{ .{
+            .color_attachments = &[_]gpu.RenderPassColorAttachment{.{
                 .view = color_msaa_view,
                 .resolve_target = if (use_post_process) color_resolve_view.? else back_buffer_view,
                 .clear_value = gpu.Color{ .r = 0.2, .g = 0.2, .b = 0.2, .a = 1.0 },
                 .load_op = .clear,
                 .store_op = .store, // discard the msaa target, the resolve still happens
-            } },
+            }},
             .depth_stencil_attachment = &.{
                 .view = depth_view,
                 .depth_load_op = .clear,
@@ -792,12 +792,12 @@ pub fn update(app: *App, core: *mach.Core) !void {
 
     if (use_post_process) {
         const pass = cb.beginRenderPass(&gpu.RenderPassDescriptor.init(.{
-            .color_attachments = &[_]gpu.RenderPassColorAttachment{ .{
+            .color_attachments = &[_]gpu.RenderPassColorAttachment{.{
                 .view = back_buffer_view,
                 .clear_value = gpu.Color{ .r = 0.0, .g = 1.0, .b = 0.0, .a = 1.0 },
                 .load_op = .clear, // apparently .undef is different from dont_care?  This is unfortunate, may need to use compute + UAV instead.
                 .store_op = .store,
-            } },
+            }},
         }));
         defer pass.release();
 
@@ -820,7 +820,9 @@ fn updateInputState(app: *App, core: *mach.Core) FrameInputs {
     while (core.pollEvent()) |event| {
         switch (event) {
             .key_press => |ev| switch (ev.key) {
-                .q, .escape, => {
+                .q,
+                .escape,
+                => {
                     if (app.mouse_captured) {
                         blk: {
                             core.setCursorMode(.normal) catch break :blk;
@@ -888,18 +890,17 @@ fn updateInputState(app: *App, core: *mach.Core) FrameInputs {
                 else => {},
             },
             .mouse_motion => |mm| {
-                if (app.mouse_pos_valid and app.mouse_captured)
-                {
+                if (app.mouse_pos_valid and app.mouse_captured) {
                     const dx = mm.pos.x - app.last_mouse_x;
                     const dy = mm.pos.y - app.last_mouse_y;
                     if (dx <= 100 and dy <= 100) {
-                        inputs.mouse_dx += @floatCast(f32, dx);
-                        inputs.mouse_dy += @floatCast(f32, dy);
+                        inputs.mouse_dx += @floatCast(dx);
+                        inputs.mouse_dy += @floatCast(dy);
                     }
                 }
 
-                app.last_mouse_x = @floatCast(f32, mm.pos.x);
-                app.last_mouse_y = @floatCast(f32, mm.pos.y);
+                app.last_mouse_x = @floatCast(mm.pos.x);
+                app.last_mouse_y = @floatCast(mm.pos.y);
                 app.mouse_pos_valid = true;
             },
             .focus_lost, .focus_gained => {
@@ -942,7 +943,7 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
         app.pitch_turns = std.math.clamp(app.pitch_turns, -0.249, 0.249);
 
         const move_speed: f32 = if (inputs.keys & Dir.shift != 0) dims.run_speed else dims.walk_speed;
-        const vec_move_speed = @splat(4, move_speed * delta_time);
+        const vec_move_speed: Vec = @splat(move_speed * delta_time);
 
         if (inputs.keys & Dir.right != 0) {
             app.player_pos += app.right_dir * vec_move_speed;
@@ -957,13 +958,13 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
             moving_backwards = true;
         }
     } else {
-        app.player_pos += app.forward_dir * @splat(4, delta_time * dims.startup_glide_speed);
+        app.player_pos += app.forward_dir * @as(Vec, @splat(delta_time * dims.startup_glide_speed));
     }
 
     if (app.last_level_complete) {
         app.level_select_brightness += delta_time * 0.7;
         if (app.level_select_brightness > 1.0) app.level_select_brightness = 1.0;
-        const brightness_byte: u32 = @floatToInt(u8, app.level_select_brightness * 255.0);
+        const brightness_byte: u32 = @as(u8, @intFromFloat(app.level_select_brightness * 255.0));
         const brightness_color: u32 = 0xFF000000 | brightness_byte | (brightness_byte << 8) | (brightness_byte << 16);
         var i: usize = 0;
         while (i < app.map.len) : (i += 1) {
@@ -982,7 +983,8 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
         // Check if they are in the door area
         if (abs(app.player_pos[2]) < dims.door_width - dims.collision_tolerance and
             edges[app.current_rotation +% 0].to_room != NO_ROOM and
-            !moving_backwards) {
+            !moving_backwards)
+        {
             // In the door, check for transfer to next room
             if (app.player_pos[0] > dims.room_width + dims.collision_tolerance) {
                 app.player_pos[0] -= 2 * dims.room_width;
@@ -997,7 +999,8 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
         // Check if they are in the door area
         if (abs(app.player_pos[0]) < dims.door_width - dims.collision_tolerance and
             edges[app.current_rotation +% 1].to_room != NO_ROOM and
-            !moving_backwards) {
+            !moving_backwards)
+        {
             // In the door, check for transfer to next room
             if (app.player_pos[2] < -dims.room_width - dims.collision_tolerance) {
                 app.player_pos[2] += 2 * dims.room_width;
@@ -1012,7 +1015,8 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
         // Check if they are in the door area
         if (abs(app.player_pos[2]) < dims.door_width - dims.collision_tolerance and
             edges[app.current_rotation +% 2].to_room != NO_ROOM and
-            !moving_backwards) {
+            !moving_backwards)
+        {
             // In the door, check for transfer to next room
             if (app.player_pos[0] < -dims.room_width - dims.collision_tolerance) {
                 app.player_pos[0] += 2 * dims.room_width;
@@ -1027,7 +1031,8 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
         // Check if they are in the door area
         if (abs(app.player_pos[0]) < dims.door_width - dims.collision_tolerance and
             edges[app.current_rotation +% 3].to_room != NO_ROOM and
-            !moving_backwards) {
+            !moving_backwards)
+        {
             // In the door, check for transfer to next room
             if (app.player_pos[2] > dims.room_width + dims.collision_tolerance) {
                 app.player_pos[2] -= 2 * dims.room_width;
@@ -1041,7 +1046,7 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
 
     app.facing_dir = if (abs(app.forward_dir[0]) > abs(app.forward_dir[2]))
         if (app.forward_dir[0] > 0) 0 else 2
-        else if (app.forward_dir[2] > 0) 3 else 1;
+    else if (app.forward_dir[2] > 0) 3 else 1;
 
     {
         const cksum = (@as(u32, app.current_room) << 6) |
@@ -1049,8 +1054,7 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
             (@as(u32, app.current_rotation) << 2) |
             (@as(u32, app.facing_dir +% app.current_rotation) << 0);
 
-        if (cksum != last_cksum)
-        {
+        if (cksum != last_cksum) {
             std.debug.print("room {}, facing {}, room rotation {}, facing edge {}\n", .{
                 app.current_room,
                 app.facing_dir,
@@ -1062,15 +1066,14 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
     }
 
     if (inputs.colorblind_change != 0) {
-        app.colorblind_mode = app.colorblind_mode +% @truncate(u2, @bitCast(u32, inputs.colorblind_change));
+        app.colorblind_mode = app.colorblind_mode +% @as(u2, @truncate(@as(u32, @bitCast(inputs.colorblind_change))));
     }
 
     var rotate_colors = inputs.color_rotation;
 
     if (inputs.grab_block) {
         // Make sure we are in a normal room
-        if (app.map.items(.type)[app.current_room] == .normal)
-        {
+        if (app.map.items(.type)[app.current_room] == .normal) {
             if (app.game_mode == .startup) {
                 app.game_mode = .normal;
             }
@@ -1094,7 +1097,7 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
         std.debug.print("Color rotation: {}\n", .{app.target_color_rotation});
     }
 
-    var target_color_rotation_f32 = @intToFloat(f32, app.target_color_rotation);
+    const target_color_rotation_f32: f32 = @floatFromInt(app.target_color_rotation);
     var distance = target_color_rotation_f32 - app.actual_color_rotation;
     if (distance < 0) distance += 3.0;
     const rotation_speed = 3.0;
@@ -1115,7 +1118,7 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
         }
 
         app.loadLevelSelect();
-        const transition_room = @intCast(u30, next_level_id);
+        const transition_room: u30 = @intCast(next_level_id);
         app.map.appendAssumeCapacity(.{
             .color = room.color,
             .edges = .{
@@ -1127,15 +1130,15 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
             .cube = NO_ROOM,
             .type = .loading,
         });
-        app.current_room = @intCast(u30, app.map.len - 1);
+        app.current_room = @intCast(app.map.len - 1);
     }
 }
 
 fn isGameSolved(app: *App) bool {
     if (app.map.len < 2) return false;
 
-    for (app.map.items(.cube)) |cube, i| {
-        if (cube != @intCast(u30, i)) {
+    for (app.map.items(.cube), 0..) |cube, i| {
+        if (cube != @as(u30, @intCast(i))) {
             return false;
         }
     }
@@ -1176,7 +1179,7 @@ fn updateViewUniforms(app: *App, queue: *gpu.Queue, size: mach.Size) void {
         zm.f32x4(0.0, 1.0, 0.0, 0.0), // up
     );
 
-    const aspect_ratio = @intToFloat(f32, size.width) / @intToFloat(f32, size.height);
+    const aspect_ratio = @as(f32, @floatFromInt(size.width)) / @as(f32, @floatFromInt(size.height));
 
     const proj = zm.perspectiveFovRh(
         45.0, // fovy
@@ -1188,7 +1191,7 @@ fn updateViewUniforms(app: *App, queue: *gpu.Queue, size: mach.Size) void {
     // Update the view uniforms
     var uniforms: ViewUniforms = .{
         .view_proj = zm.mul(view, proj),
-        .inv_screen_size = .{ 1.0 / @intToFloat(f32, size.width), 1.0 / @intToFloat(f32, size.height) },
+        .inv_screen_size = .{ 1.0 / @as(f32, @floatFromInt(size.width)), 1.0 / @as(f32, @floatFromInt(size.height)) },
         .flat_look_xz = .{ app.forward_dir[0], app.forward_dir[2] },
     };
     queue.writeBuffer(app.view_uniform_buffer, 0, std.mem.asBytes(&uniforms));
@@ -1198,16 +1201,13 @@ fn updateHeldObjectUniforms(app: *App, queue: *gpu.Queue) void {
     const fwd_dist: f32 = std.math.sqrt2 * 0.05;
     const right_dist: f32 = std.math.sqrt2 * 0.05;
     const held_scale: f32 = 0.7;
-    const object_pos = app.player_pos
-        + @splat(4, fwd_dist) * app.forward_dir
-        + @splat(4, right_dist) * app.right_dir
-        + zm.f32x4(0, dims.held_height - dims.player_height, 0, 0);
+    const object_pos = app.player_pos + @as(Vec, @splat(fwd_dist)) * app.forward_dir + @as(Vec, @splat(right_dist)) * app.right_dir + Vec{ 0, dims.held_height - dims.player_height, 0, 0 };
     const plane = Plane2{
         .normal = .{ app.forward_dir[0], app.forward_dir[2] },
     };
     const projected_pos = plane.projectPoint(.{ object_pos[0], object_pos[2] });
-    const scale = Vec{ held_scale, held_scale, held_scale, 1.0 };     
-    const aabb = app.meshes.cube.aabb;   
+    const scale = Vec{ held_scale, held_scale, held_scale, 1.0 };
+    const aabb = app.meshes.cube.aabb;
     const uniforms = ObjectUniforms{
         .transform_0 = scale * Vec{ app.forward_dir[0], 0, app.right_dir[0], object_pos[0] },
         .transform_1 = scale * Vec{ app.forward_dir[1], 1, app.right_dir[1], object_pos[1] },
@@ -1237,25 +1237,25 @@ fn updatePostProcessUniforms(app: *App, queue: *gpu.Queue) void {
 
 fn colorToVec(color: u32) Vec {
     const ucolor = Vec{
-        @intToFloat(f32, @truncate(u8, color >>  0)),
-        @intToFloat(f32, @truncate(u8, color >>  8)),
-        @intToFloat(f32, @truncate(u8, color >> 16)),
-        @intToFloat(f32, @truncate(u8, color >> 24)),
+        @floatFromInt(@as(u8, @truncate(color >> 0))),
+        @floatFromInt(@as(u8, @truncate(color >> 8))),
+        @floatFromInt(@as(u8, @truncate(color >> 16))),
+        @floatFromInt(@as(u8, @truncate(color >> 24))),
     };
-    return ucolor * @splat(4, @as(f32, 1.0 / 255.0));
+    return ucolor * @as(Vec, @splat(@as(f32, 1.0 / 255.0)));
 }
 
 fn vecToColor(vec: Vec) u32 {
-    const scaled = vec * @splat(4, @as(f32, 255.0));
-    const r = @intCast(u32, std.math.clamp(@floatToInt(i32, scaled[0]), 0, 255));
-    const g = @intCast(u32, std.math.clamp(@floatToInt(i32, scaled[1]), 0, 255));
-    const b = @intCast(u32, std.math.clamp(@floatToInt(i32, scaled[2]), 0, 255));
-    const a = @intCast(u32, std.math.clamp(@floatToInt(i32, scaled[3]), 0, 255));
+    const scaled = vec * @as(Vec, @splat(@as(f32, 255.0)));
+    const r: u32 = @intCast(std.math.clamp(@as(i32, @intFromFloat(scaled[0])), 0, 255));
+    const g: u32 = @intCast(std.math.clamp(@as(i32, @intFromFloat(scaled[1])), 0, 255));
+    const b: u32 = @intCast(std.math.clamp(@as(i32, @intFromFloat(scaled[2])), 0, 255));
+    const a: u32 = @intCast(std.math.clamp(@as(i32, @intFromFloat(scaled[3])), 0, 255));
     return (r << 0) | (g << 8) | (b << 16) | (a << 24);
 }
 
 fn darkenColor(color: u32) u32 {
-    const factor = @splat(4, @as(f32, 0.9));
+    const factor: Vec = @splat(@as(f32, 0.9));
     return vecToColor(factor * colorToVec(color));
 }
 
@@ -1264,7 +1264,7 @@ fn updateInstances(app: *App, queue: *gpu.Queue) void {
         .slice = app.map.slice(),
     };
 
-    b.addRoom(app.current_room, .{0,0});
+    b.addRoom(app.current_room, .{ 0, 0 });
 
     const forward = app.facing_dir;
     const left = app.facing_dir +% 1;
@@ -1323,38 +1323,38 @@ fn updateInstances(app: *App, queue: *gpu.Queue) void {
     // Upload streamed instance data to the gpu
     var total_instances: u32 = 0;
     app.room_instance_offset = total_instances;
-    app.num_visible_rooms = @intCast(u32, b.rooms.len);
+    app.num_visible_rooms = @intCast(b.rooms.len);
     queue.writeBuffer(app.instance_list, total_instances * @sizeOf(InstanceAttrs), b.rooms.slice());
-    total_instances += @intCast(u32, b.rooms.len);
+    total_instances += @intCast(b.rooms.len);
 
     app.wall_instance_offset = total_instances;
-    app.num_visible_walls = @intCast(u32, b.walls.len);
+    app.num_visible_walls = @intCast(b.walls.len);
     queue.writeBuffer(app.instance_list, total_instances * @sizeOf(InstanceAttrs), b.walls.slice());
-    total_instances += @intCast(u32, b.walls.len);
+    total_instances += @intCast(b.walls.len);
 
     app.door_instance_offset = total_instances;
-    app.num_visible_doors = @intCast(u32, b.doors.len);
+    app.num_visible_doors = @intCast(b.doors.len);
     queue.writeBuffer(app.instance_list, total_instances * @sizeOf(InstanceAttrs), b.doors.slice());
-    total_instances += @intCast(u32, b.doors.len);
+    total_instances += @intCast(b.doors.len);
 
     app.cube_instance_offset = total_instances;
-    app.num_visible_cubes = @intCast(u32, b.cubes.len);
+    app.num_visible_cubes = @intCast(b.cubes.len);
     queue.writeBuffer(app.instance_list, total_instances * @sizeOf(InstanceAttrs), b.cubes.slice());
-    total_instances += @intCast(u32, b.cubes.len);
+    total_instances += @intCast(b.cubes.len);
 
     app.seat_instance_offset = total_instances;
-    app.num_visible_seats = @intCast(u32, b.seats.len);
+    app.num_visible_seats = @intCast(b.seats.len);
     queue.writeBuffer(app.instance_list, total_instances * @sizeOf(InstanceAttrs), b.seats.slice());
-    total_instances += @intCast(u32, b.seats.len);
+    total_instances += @intCast(b.seats.len);
 
     app.total_instances = total_instances;
 }
 
 const facing_deltas = [4][2]f32{
-    .{1, 0},
-    .{0, -1},
-    .{-1, 0},
-    .{0, 1},
+    .{ 1, 0 },
+    .{ 0, -1 },
+    .{ -1, 0 },
+    .{ 0, 1 },
 };
 
 const InstanceBuilder = struct {
@@ -1369,7 +1369,7 @@ const InstanceBuilder = struct {
     fn addSpineInstances(b: *InstanceBuilder, app: *App, facing_dir: u2, limit: u32) void {
         const edges = b.slice.items(.edges);
         const delta = facing_deltas[facing_dir];
-        var position: [2]f32 = .{0,0};
+        var position: [2]f32 = .{ 0, 0 };
         var room = app.current_room;
         var rotation = app.current_rotation +% facing_dir;
         var i: u32 = 0;
@@ -1392,7 +1392,7 @@ const InstanceBuilder = struct {
         const primary_delta = facing_deltas[primary_dir];
         const secondary_delta = facing_deltas[secondary_dir];
 
-        var position: [2]f32 = .{0,0};
+        var position: [2]f32 = .{ 0, 0 };
         var room = app.current_room;
         var rotation = app.current_rotation +% primary_dir;
 
@@ -1453,7 +1453,7 @@ const InstanceBuilder = struct {
             });
         }
         if (b.slice.items(.type)[index] == .normal) {
-            const seat_color = if (cube == index) [2]u32{0xFFEFEFEF, 0xFFEFEFEF} else [2]u32{0,0};
+            const seat_color = if (cube == index) [2]u32{ 0xFFEFEFEF, 0xFFEFEFEF } else [2]u32{ 0, 0 };
             b.seats.appendAssumeCapacity(.{
                 .translation = position,
                 .rotation = 0,
@@ -1493,4 +1493,3 @@ const InstanceBuilder = struct {
         }
     }
 };
-
