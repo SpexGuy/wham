@@ -24,8 +24,8 @@
     // internet connectivity.
     .dependencies = .{
         .mach = .{
-            .url = "https://pkg.machengine.org/mach/f22049464910d17b97acfd7e84ecfbe3c2f3d53f.tar.gz",
-            .hash = "122047db4f791849d42562e3ae529f25b099d03d495320cbc0f6bf46dd08a848b5dd",
+            .url = "https://pkg.machengine.org/mach/0049f0303578e8203af03c20c969a9fb3ab9a36f.tar.gz",
+            .hash = "1220203cdb9c66998abf55c99d4c84a78f11a7d0db2992adf3840a24f2d2bb829edc",
         },
     },
     .paths = .{

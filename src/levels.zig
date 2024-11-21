@@ -6,14 +6,14 @@ fn double(color: u32) [2]u32 {
     return .{ color, color };
 }
 fn grad_a(color: u32) [2]u32 {
-    if (comptime @import("builtin").cpu.arch.endian() != .Little)
+    if (comptime @import("builtin").cpu.arch.endian() != .little)
         @compileError("The following code assumes little endian");
     const bytes: [4]u8 = @bitCast(color);
     const rot = [4]u8{ bytes[1], bytes[2], bytes[0], bytes[3] };
     return .{ color, @bitCast(rot) };
 }
 fn grad_b(color: u32) [2]u32 {
-    if (comptime @import("builtin").cpu.arch.endian() != .Little)
+    if (comptime @import("builtin").cpu.arch.endian() != .little)
         @compileError("The following code assumes little endian");
     const bytes: [4]u8 = @bitCast(color);
     const rot = [4]u8{ bytes[2], bytes[0], bytes[1], bytes[3] };

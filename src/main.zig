@@ -1,7 +1,6 @@
 const std = @import("std");
 const mach = @import("mach");
-const gpu = @import("gpu");
-const zm = @import("zmath");
+const gpu = mach.gpu;
 const levels = @import("levels.zig").levels;
 const dims = @import("dimensions.zig");
 const StaticMeshes = @import("StaticMeshes.zig");
@@ -9,13 +8,29 @@ const StaticMeshes = @import("StaticMeshes.zig");
 var allow_debug_commands = false;
 
 const Vec = @Vector(4, f32);
-const Mat = zm.Mat;
-const Quat = zm.Quat;
-const Size = mach.Size;
+const Mat = [4]Vec;
+const Quat = Vec;
 
 const tau = 2 * std.math.pi;
 
+pub const systems = .{
+    .start = .{ .handler = start },
+    .init = .{ .handler = init },
+    .post_init = .{ .handler = post_init },
+    .deinit = .{ .handler = deinit },
+    .tick = .{ .handler = update },
+};
+
+fn start(core: *mach.Core.Mod, app: *Mod) !void {
+    core.schedule(.init);
+    app.schedule(.init);
+}
+
+pub const name = .app;
+
 pub const App = @This();
+
+pub const Mod = mach.Mod(App);
 
 const ViewUniforms = extern struct {
     view_proj: Mat,
@@ -43,6 +58,8 @@ const gpa = std.heap.c_allocator;
 
 meshes: StaticMeshes,
 
+swap_chain_format: gpu.Texture.Format,
+
 view_uniform_buffer: *gpu.Buffer,
 view_bindings: *gpu.BindGroup,
 held_object_uniform_buffer: *gpu.Buffer,
@@ -64,6 +81,8 @@ mouse_captured: bool = false,
 mouse_pos_valid: bool = false,
 last_mouse_x: f32 = 0,
 last_mouse_y: f32 = 0,
+
+timer: mach.Timer,
 
 // 0: none,
 // 1: simulate no red cones
@@ -96,11 +115,11 @@ facing_dir: u2 = 0,
 
 held_cube: u30 = NO_ROOM,
 
-forward_dir: Vec = zm.f32x4(1, 0, 0, 0),
-look_dir: Vec = zm.f32x4(1, 0, 0, 0),
-right_dir: Vec = zm.f32x4(0, 1, 0, 0),
+forward_dir: Vec = .{ 1, 0, 0, 0 },
+look_dir: Vec = .{ 1, 0, 0, 0 },
+right_dir: Vec = .{ 0, 1, 0, 0 },
 
-player_pos: Vec = zm.f32x4(0, dims.player_height, 0, 0),
+player_pos: Vec = .{ 0, dims.player_height, 0, 0 },
 
 level_select_brightness: f32 = 0.0,
 last_level_complete: bool = false,
@@ -151,18 +170,29 @@ pub const AABB = struct {
     }
 };
 
+fn normalize2(v: Vec) Vec {
+    _ = v;
+    @panic("normalize2 unimplemented");
+}
+
+fn dot2(a: Vec, b: Vec) f32 {
+    _ = a;
+    _ = b;
+    @panic("dot2 unimplemented");
+}
+
 pub const Plane2 = struct {
     normal: [2]f32,
 
     pub fn normalize(self: *Plane2) void {
-        const nm = zm.normalize2(.{ self.normal[0], self.normal[1], 0, 0 });
+        const nm = normalize2(.{ self.normal[0], self.normal[1], 0, 0 });
         self.normal[0] = nm[0];
         self.normal[1] = nm[1];
     }
 
     pub fn projectPoint(plane: Plane2, point: [2]f32) f32 {
         const right = Vec{ -plane.normal[1], plane.normal[0], 0, 0 };
-        return zm.dot2(right, Vec{ point[0], point[1], 0, 0 })[0];
+        return dot2(right, Vec{ point[0], point[1], 0, 0 });
     }
 
     pub fn projectAabb(plane: Plane2, aabb: AABB) [2]f32 {
@@ -170,18 +200,18 @@ pub const Plane2 = struct {
         var max = min;
         {
             const along = projectPoint(plane, .{ aabb.max[0], aabb.max[2] });
-            min = std.math.min(min, along);
-            max = std.math.max(max, along);
+            min = @min(min, along);
+            max = @max(max, along);
         }
         {
             const along = projectPoint(plane, .{ aabb.min[0], aabb.max[2] });
-            min = std.math.min(min, along);
-            max = std.math.max(max, along);
+            min = @min(min, along);
+            max = @max(max, along);
         }
         {
             const along = projectPoint(plane, .{ aabb.max[0], aabb.min[2] });
-            min = std.math.min(min, along);
-            max = std.math.max(max, along);
+            min = @min(min, along);
+            max = @max(max, along);
         }
         return .{ min, max };
     }
@@ -278,7 +308,16 @@ pub const RoomType = enum {
     level_select,
 };
 
-pub fn init(app: *App, core: *mach.Core) !void {
+pub fn init(appm: *Mod, corem: *mach.Core.Mod) !void {
+    corem.schedule(.init);
+    appm.schedule(.post_init);
+}
+
+pub fn post_init(appm: *Mod, corem: *mach.Core.Mod) !void {
+    const core = corem.state();
+
+    const swap_chain_format = corem.get(core.main_window, .framebuffer_format).?;
+
     const instance_list = core.device.createBuffer(&gpu.Buffer.Descriptor{
         .label = "instance_list",
         .usage = .{ .copy_dst = true, .vertex = true },
@@ -416,12 +455,14 @@ pub fn init(app: *App, core: *mach.Core) !void {
             .module = room_shader_module,
             .entry_point = "frag_main",
             .targets = &[_]gpu.ColorTargetState{.{
-                .format = core.swap_chain_format,
+                .format = swap_chain_format,
+                .blend = &gpu.BlendState{},
+                .write_mask = gpu.ColorWriteMaskFlags.all,
             }},
         }),
         .depth_stencil = &.{
             .format = .depth32_float,
-            .depth_write_enabled = true,
+            .depth_write_enabled = .true,
             .depth_compare = .less,
         },
         .primitive = .{
@@ -490,12 +531,14 @@ pub fn init(app: *App, core: *mach.Core) !void {
             .module = room_shader_module,
             .entry_point = "frag_main_screenspace",
             .targets = &[_]gpu.ColorTargetState{.{
-                .format = core.swap_chain_format,
+                .format = swap_chain_format,
+                .blend = &gpu.BlendState{},
+                .write_mask = gpu.ColorWriteMaskFlags.all,
             }},
         }),
         .depth_stencil = &.{
             .format = .depth32_float,
-            .depth_write_enabled = true,
+            .depth_write_enabled = .true,
             .depth_compare = .less,
         },
         .primitive = .{
@@ -532,12 +575,14 @@ pub fn init(app: *App, core: *mach.Core) !void {
             .module = room_shader_module,
             .entry_point = "frag_main",
             .targets = &[_]gpu.ColorTargetState{.{
-                .format = core.swap_chain_format,
+                .format = swap_chain_format,
+                .blend = &gpu.BlendState{},
+                .write_mask = gpu.ColorWriteMaskFlags.all,
             }},
         }),
         .depth_stencil = &.{
             .format = .depth32_float,
-            .depth_write_enabled = false,
+            .depth_write_enabled = .false,
             .depth_compare = .always,
         },
         .primitive = .{
@@ -559,7 +604,9 @@ pub fn init(app: *App, core: *mach.Core) !void {
             .module = post_process_shader_module,
             .entry_point = "frag_main",
             .targets = &[_]gpu.ColorTargetState{.{
-                .format = core.swap_chain_format,
+                .format = swap_chain_format,
+                .blend = &gpu.BlendState{},
+                .write_mask = gpu.ColorWriteMaskFlags.all,
             }},
         }),
         .primitive = .{
@@ -568,7 +615,7 @@ pub fn init(app: *App, core: *mach.Core) !void {
         },
     });
 
-    app.* = .{
+    appm.init(.{
         .instanced_pipeline_aabb = instanced_pipeline_aabb,
         .instanced_pipeline_screenspace = instanced_pipeline_screenspace,
         .object_pipeline = object_pipeline,
@@ -581,17 +628,23 @@ pub fn init(app: *App, core: *mach.Core) !void {
         .post_process_bindings_layout = post_process_bindings_layout,
         .post_process_uniform_buffer = post_process_buffer,
 
+        .swap_chain_format = swap_chain_format,
+
         .instance_list = instance_list,
 
+        .timer = mach.Timer.start() catch @panic("Failed to start frame timer"),
+
         .meshes = undefined,
-    };
+    });
 
-    app.meshes.init(core.device, core.device.getQueue());
+    appm.state().meshes.init(core.device, core.device.getQueue());
 
-    app.loadLevel(0);
+    appm.state().loadLevel(0);
+
+    corem.schedule(.start);
 }
 
-pub fn deinit(_: *App, _: *mach.Core) void {}
+pub fn deinit() void {}
 
 fn loadLevelSelect(app: *App) void {
     app.level_select_brightness = 0.0;
@@ -658,16 +711,23 @@ fn loadLevel(app: *App, index: usize) void {
     app.held_cube = NO_ROOM;
 }
 
-pub fn update(app: *App, core: *mach.Core) !void {
+pub fn update(appm: *Mod, corem: *mach.Core.Mod) !void {
+    const app = appm.state();
+    const core = corem.state();
+
+    const delta_time = app.timer.lap();
     // Poll inputs
-    const inputs = app.updateInputState(core);
-    app.updateSimulation(core.delta_time, inputs);
+    const inputs = app.updateInputState(corem);
+    app.updateSimulation(delta_time, inputs);
 
     const use_post_process = true;
 
     // Update gpu state
     const queue = core.device.getQueue();
-    const size = core.getFramebufferSize();
+    const size = [_]u32{
+        corem.get(core.main_window, .framebuffer_width).?,
+        corem.get(core.main_window, .framebuffer_height).?,
+    };
     app.updateViewUniforms(queue, size);
     if (app.held_cube != NO_ROOM) {
         app.updateHeldObjectUniforms(queue);
@@ -683,8 +743,8 @@ pub fn update(app: *App, core: *mach.Core) !void {
     // Unfortunately, webgpu doesn't have memoryless textures.
     // So we're stuck allocating big MSAA backing memory that will never be used :(
     const color_msaa_texture = core.device.createTexture(&gpu.Texture.Descriptor{
-        .size = .{ .width = size.width, .height = size.height },
-        .format = core.swap_chain_format,
+        .size = .{ .width = size[0], .height = size[1] },
+        .format = app.swap_chain_format,
         .sample_count = MSAA_COUNT,
         .usage = .{ .render_attachment = true },
     });
@@ -698,7 +758,7 @@ pub fn update(app: *App, core: *mach.Core) !void {
     defer color_msaa_view.release();
 
     const depth_texture = core.device.createTexture(&gpu.Texture.Descriptor{
-        .size = .{ .width = size.width, .height = size.height },
+        .size = .{ .width = size[0], .height = size[1] },
         .format = .depth32_float,
         .sample_count = MSAA_COUNT,
         .usage = .{ .render_attachment = true },
@@ -722,8 +782,8 @@ pub fn update(app: *App, core: *mach.Core) !void {
 
     if (use_post_process) {
         color_resolve_buffer = core.device.createTexture(&gpu.Texture.Descriptor{
-            .size = .{ .width = size.width, .height = size.height },
-            .format = core.swap_chain_format,
+            .size = .{ .width = size[0], .height = size[1] },
+            .format = app.swap_chain_format,
             .usage = .{ .render_attachment = true, .texture_binding = true },
         });
 
@@ -743,7 +803,7 @@ pub fn update(app: *App, core: *mach.Core) !void {
         }));
     }
 
-    const back_buffer_view = core.swap_chain.?.getCurrentTextureView();
+    const back_buffer_view = mach.core.swap_chain.getCurrentTextureView().?;
     defer back_buffer_view.release();
 
     const cb = core.device.createCommandEncoder(null);
@@ -812,25 +872,27 @@ pub fn update(app: *App, core: *mach.Core) !void {
     defer command.release();
 
     core.device.getQueue().submit(&.{command});
-    core.swap_chain.?.present();
+    mach.core.swap_chain.present();
 }
 
-fn updateInputState(app: *App, core: *mach.Core) FrameInputs {
+fn updateInputState(app: *App, corem: *mach.Core.Mod) FrameInputs {
     var inputs: FrameInputs = .{};
-    while (core.pollEvent()) |event| {
+    var iter = mach.core.pollEvents();
+    while (iter.next()) |event| {
         switch (event) {
+            .close => corem.schedule(.exit),
             .key_press => |ev| switch (ev.key) {
                 .q,
                 .escape,
                 => {
                     if (app.mouse_captured) {
-                        blk: {
-                            core.setCursorMode(.normal) catch break :blk;
+                        {
+                            //core.setCursorMode(.normal) catch break :blk;
                             app.mouse_captured = false;
                             app.mouse_pos_valid = false;
                         }
                     } else {
-                        core.close();
+                        corem.schedule(.exit);
                     }
                 },
                 .w, .up => {
@@ -908,8 +970,8 @@ fn updateInputState(app: *App, core: *mach.Core) FrameInputs {
             },
             .mouse_press => {
                 if (!app.mouse_captured) {
-                    blk: {
-                        core.setCursorMode(.disabled) catch break :blk;
+                    {
+                        //core.setCursorMode(.disabled) catch break :blk;
                         app.mouse_captured = true;
                         app.mouse_pos_valid = false;
                     }
@@ -928,12 +990,12 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
 
     const theta = app.yaw_turns * tau;
     const phi = app.pitch_turns * tau;
-    app.forward_dir = zm.f32x4(@cos(theta), 0, @sin(theta), 0);
-    app.right_dir = zm.f32x4(-@sin(theta), 0, @cos(theta), 0);
-    app.look_dir = zm.f32x4(@cos(theta) * @cos(phi), @sin(phi), @sin(theta) * @cos(phi), 0);
+    app.forward_dir = .{ @cos(theta), 0, @sin(theta), 0 };
+    app.right_dir = .{ -@sin(theta), 0, @cos(theta), 0 };
+    app.look_dir = .{ @cos(theta) * @cos(phi), @sin(phi), @sin(theta) * @cos(phi), 0 };
 
     // Prevent giant timesteps from causing problems
-    const delta_time = std.math.min(raw_delta_time, 0.2);
+    const delta_time = @min(raw_delta_time, 0.2);
 
     if (app.game_mode != .startup) {
         app.yaw_turns += inputs.mouse_dx / 2000;
@@ -1101,7 +1163,7 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
     var distance = target_color_rotation_f32 - app.actual_color_rotation;
     if (distance < 0) distance += 3.0;
     const rotation_speed = 3.0;
-    distance = std.math.min(distance, rotation_speed * raw_delta_time);
+    distance = @min(distance, rotation_speed * raw_delta_time);
     app.actual_color_rotation += distance;
     // app.actual_color_rotation += delta_time * 0.3;
     if (app.actual_color_rotation >= 3.0) app.actual_color_rotation -= 3.0;
@@ -1170,18 +1232,42 @@ fn abs(x: anytype) @TypeOf(x) {
     return if (x < 0) -x else x;
 }
 
-fn updateViewUniforms(app: *App, queue: *gpu.Queue, size: mach.Size) void {
+fn lookAtRh(eye: Vec, target: Vec, up: Vec) Mat {
+    _ = eye;
+    _ = target;
+    _ = up;
+    // TODO
+    @panic("lookAtRh unimplemented");
+}
+
+fn perspectiveFovRh(fovy: f32, aspect: f32, near: f32, far: f32) Mat {
+    // TODO
+    _ = fovy;
+    _ = aspect;
+    _ = near;
+    _ = far;
+    @panic("perspectiveFovRh unimplemented");
+}
+
+fn mul(a: Mat, b: Mat) Mat {
+    // TODO
+    _ = a;
+    _ = b;
+    @panic("mul unimplemented");
+}
+
+fn updateViewUniforms(app: *App, queue: *gpu.Queue, size: [2]u32) void {
     const eye_pos = app.player_pos;
 
-    const view = zm.lookAtRh(
+    const view = lookAtRh(
         eye_pos, // eye
         eye_pos + app.look_dir, // target
-        zm.f32x4(0.0, 1.0, 0.0, 0.0), // up
+        .{ 0.0, 1.0, 0.0, 0.0 }, // up
     );
 
-    const aspect_ratio = @as(f32, @floatFromInt(size.width)) / @as(f32, @floatFromInt(size.height));
+    const aspect_ratio = @as(f32, @floatFromInt(size[0])) / @as(f32, @floatFromInt(size[1]));
 
-    const proj = zm.perspectiveFovRh(
+    const proj = perspectiveFovRh(
         45.0, // fovy
         aspect_ratio,
         0.01, // near
@@ -1190,8 +1276,8 @@ fn updateViewUniforms(app: *App, queue: *gpu.Queue, size: mach.Size) void {
 
     // Update the view uniforms
     var uniforms: ViewUniforms = .{
-        .view_proj = zm.mul(view, proj),
-        .inv_screen_size = .{ 1.0 / @as(f32, @floatFromInt(size.width)), 1.0 / @as(f32, @floatFromInt(size.height)) },
+        .view_proj = mul(view, proj),
+        .inv_screen_size = .{ 1.0 / @as(f32, @floatFromInt(size[0])), 1.0 / @as(f32, @floatFromInt(size[1])) },
         .flat_look_xz = .{ app.forward_dir[0], app.forward_dir[2] },
     };
     queue.writeBuffer(app.view_uniform_buffer, 0, std.mem.asBytes(&uniforms));
@@ -1222,10 +1308,21 @@ fn updateHeldObjectUniforms(app: *App, queue: *gpu.Queue) void {
     queue.writeBuffer(app.held_object_uniform_buffer, 0, std.mem.asBytes(&uniforms));
 }
 
+fn normalize3(v: Vec) Vec {
+    _ = v;
+    @panic("normalize3 unimplemented");
+}
+
+fn matFromNormAxisAngle(axis: Vec, angle: f32) Mat {
+    _ = axis;
+    _ = angle;
+    @panic("matFromNormAxisAngle unimplemented");
+}
+
 fn updatePostProcessUniforms(app: *App, queue: *gpu.Queue) void {
-    const axis = zm.normalize3(Vec{ 1.0, 1.0, 1.0, 0.0 });
+    const axis = normalize3(Vec{ 1.0, 1.0, 1.0, 0.0 });
     const angle = app.actual_color_rotation * 0.333333 * std.math.tau;
-    const mat = zm.matFromNormAxisAngle(axis, angle);
+    const mat = matFromNormAxisAngle(axis, angle);
     const uniforms = PostProcessUniforms{
         .color_rotation_0 = mat[0],
         .color_rotation_1 = mat[1],
@@ -1493,3 +1590,15 @@ const InstanceBuilder = struct {
         }
     }
 };
+
+pub const modules = .{
+    mach.Core,
+    App,
+};
+
+pub fn main() !void {
+    // Initialize module system
+    try mach.core.initModule();
+
+    while (try mach.core.tick()) {}
+}

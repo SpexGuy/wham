@@ -1,4 +1,5 @@
-const gpu = @import("gpu");
+const mach = @import("mach");
+const gpu = mach.gpu;
 const dims = @import("dimensions.zig");
 const main = @import("main.zig");
 const StaticMeshes = @This();
