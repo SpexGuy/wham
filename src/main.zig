@@ -7,9 +7,10 @@ const StaticMeshes = @import("StaticMeshes.zig");
 
 var allow_debug_commands = false;
 
-const Vec = @Vector(4, f32);
-const Mat = [4]Vec;
-const Quat = Vec;
+const Vec2 = mach.math.Vec2;
+const Vec3 = mach.math.Vec3;
+const Vec4 = mach.math.Vec4;
+const Mat4x4 = mach.math.Mat4x4;
 
 const tau = 2 * std.math.pi;
 
@@ -33,24 +34,24 @@ pub const App = @This();
 pub const Mod = mach.Mod(App);
 
 const ViewUniforms = extern struct {
-    view_proj: Mat,
+    view_proj: Mat4x4,
     inv_screen_size: [2]f32,
     flat_look_xz: [2]f32,
 };
 
 const ObjectUniforms = extern struct {
-    transform_0: Vec,
-    transform_1: Vec,
-    transform_2: Vec,
-    color_a: Vec,
-    color_b: Vec,
-    blend_offset_scale: Vec,
+    transform_0: Vec4,
+    transform_1: Vec4,
+    transform_2: Vec4,
+    color_a: Vec4,
+    color_b: Vec4,
+    blend_offset_scale: Vec4,
 };
 
 const PostProcessUniforms = extern struct {
-    color_rotation_0: Vec,
-    color_rotation_1: Vec,
-    color_rotation_2: Vec,
+    color_rotation_0: Vec4,
+    color_rotation_1: Vec4,
+    color_rotation_2: Vec4,
     colorblind_mode: u32 align(16),
 };
 
@@ -115,11 +116,11 @@ facing_dir: u2 = 0,
 
 held_cube: u30 = NO_ROOM,
 
-forward_dir: Vec = .{ 1, 0, 0, 0 },
-look_dir: Vec = .{ 1, 0, 0, 0 },
-right_dir: Vec = .{ 0, 1, 0, 0 },
+forward_dir: Vec3 = Vec3.init(1, 0, 0),
+look_dir: Vec3 = Vec3.init(1, 0, 0),
+right_dir: Vec3 = Vec3.init(0, 1, 0),
 
-player_pos: Vec = .{ 0, dims.player_height, 0, 0 },
+player_pos: Vec3 = Vec3.init(0, dims.player_height, 0),
 
 level_select_brightness: f32 = 0.0,
 last_level_complete: bool = false,
@@ -170,46 +171,34 @@ pub const AABB = struct {
     }
 };
 
-fn normalize2(v: Vec) Vec {
-    _ = v;
-    @panic("normalize2 unimplemented");
-}
-
-fn dot2(a: Vec, b: Vec) f32 {
-    _ = a;
-    _ = b;
-    @panic("dot2 unimplemented");
-}
-
 pub const Plane2 = struct {
-    normal: [2]f32,
+    normal: Vec2,
 
     pub fn normalize(self: *Plane2) void {
-        const nm = normalize2(.{ self.normal[0], self.normal[1], 0, 0 });
-        self.normal[0] = nm[0];
-        self.normal[1] = nm[1];
+        const tmp = self.normal.normalize(1.0);
+        self.normal = tmp;
     }
 
-    pub fn projectPoint(plane: Plane2, point: [2]f32) f32 {
-        const right = Vec{ -plane.normal[1], plane.normal[0], 0, 0 };
-        return dot2(right, Vec{ point[0], point[1], 0, 0 });
+    pub fn projectPoint(plane: Plane2, point: Vec2) f32 {
+        const right = Vec2.init(-plane.normal.v[1], plane.normal.v[0]);
+        return right.dot(&point);
     }
 
     pub fn projectAabb(plane: Plane2, aabb: AABB) [2]f32 {
-        var min = projectPoint(plane, .{ aabb.min[0], aabb.min[2] });
+        var min = projectPoint(plane, Vec2.init(aabb.min[0], aabb.min[2]));
         var max = min;
         {
-            const along = projectPoint(plane, .{ aabb.max[0], aabb.max[2] });
+            const along = projectPoint(plane, Vec2.init(aabb.max[0], aabb.max[2]));
             min = @min(min, along);
             max = @max(max, along);
         }
         {
-            const along = projectPoint(plane, .{ aabb.min[0], aabb.max[2] });
+            const along = projectPoint(plane, Vec2.init(aabb.min[0], aabb.max[2]));
             min = @min(min, along);
             max = @max(max, along);
         }
         {
-            const along = projectPoint(plane, .{ aabb.max[0], aabb.min[2] });
+            const along = projectPoint(plane, Vec2.init(aabb.max[0], aabb.min[2]));
             min = @min(min, along);
             max = @max(max, along);
         }
@@ -217,13 +206,13 @@ pub const Plane2 = struct {
     }
 
     pub fn projectOffsetAabb(plane: Plane2, aabb: AABB, offset: [2]f32) [2]f32 {
-        const aligned_offset = projectPoint(plane, offset);
+        const aligned_offset = projectPoint(plane, Vec2.init(offset[0], offset[1]));
         const range = projectAabb(plane, aabb);
         return .{ range[0] + aligned_offset, range[1] + aligned_offset };
     }
 };
 
-pub fn calcOffsetScale(range: [2]f32) Vec {
+pub fn calcOffsetScale(range: [2]f32) Vec4 {
     // let diff = range[1] - range[0]
     // (x - range[0]) / diff = [0..1]
     // x / diff - range[0] / diff = [0..1]
@@ -232,10 +221,10 @@ pub fn calcOffsetScale(range: [2]f32) Vec {
     const diff = range[1] - range[0];
     const scale = 1.0 / diff;
     const offset = -range[0] * scale;
-    return .{ offset, scale, 0, 0 };
+    return Vec4.init(offset, scale, 0, 0);
 }
 
-pub fn makeOffsetScale(plane: Plane2, aabb: AABB, rotation: u2, translation: [2]f32) Vec {
+pub fn makeOffsetScale(plane: Plane2, aabb: AABB, rotation: u2, translation: [2]f32) Vec4 {
     const range = plane.projectOffsetAabb(aabb.rotatedXZ(rotation), translation);
     return calcOffsetScale(range);
 }
@@ -285,7 +274,7 @@ const InstanceAttrs = extern struct {
     rotation: u32,
     color_a: u32,
     color_b: u32,
-    offset_scale: [4]f32 = undefined,
+    offset_scale: Vec4 = undefined,
 };
 
 pub const NO_ROOM = ~@as(u30, 0);
@@ -990,9 +979,9 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
 
     const theta = app.yaw_turns * tau;
     const phi = app.pitch_turns * tau;
-    app.forward_dir = .{ @cos(theta), 0, @sin(theta), 0 };
-    app.right_dir = .{ -@sin(theta), 0, @cos(theta), 0 };
-    app.look_dir = .{ @cos(theta) * @cos(phi), @sin(phi), @sin(theta) * @cos(phi), 0 };
+    app.forward_dir = Vec3.init(@cos(theta), 0, @sin(theta));
+    app.right_dir = Vec3.init(-@sin(theta), 0, @cos(theta));
+    app.look_dir = Vec3.init(@cos(theta) * @cos(phi), @sin(phi), @sin(theta) * @cos(phi));
 
     // Prevent giant timesteps from causing problems
     const delta_time = @min(raw_delta_time, 0.2);
@@ -1005,22 +994,27 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
         app.pitch_turns = std.math.clamp(app.pitch_turns, -0.249, 0.249);
 
         const move_speed: f32 = if (inputs.keys & Dir.shift != 0) dims.run_speed else dims.walk_speed;
-        const vec_move_speed: Vec = @splat(move_speed * delta_time);
+        const move_len = move_speed * delta_time;
 
         if (inputs.keys & Dir.right != 0) {
-            app.player_pos += app.right_dir * vec_move_speed;
+            const tmp = app.player_pos.add(&app.right_dir.mulScalar(move_len));
+            app.player_pos = tmp;
         } else if (inputs.keys & Dir.left != 0) {
-            app.player_pos -= app.right_dir * vec_move_speed;
+            const tmp = app.player_pos.sub(&app.right_dir.mulScalar(move_len));
+            app.player_pos = tmp;
         }
 
         if (inputs.keys & Dir.up != 0) {
-            app.player_pos += app.forward_dir * vec_move_speed;
+            const tmp = app.player_pos.add(&app.forward_dir.mulScalar(move_len));
+            app.player_pos = tmp;
         } else if (inputs.keys & Dir.down != 0) {
-            app.player_pos -= app.forward_dir * vec_move_speed;
+            const tmp = app.player_pos.sub(&app.forward_dir.mulScalar(move_len));
+            app.player_pos = tmp;
             moving_backwards = true;
         }
     } else {
-        app.player_pos += app.forward_dir * @as(Vec, @splat(delta_time * dims.startup_glide_speed));
+        const tmp = app.player_pos.add(&app.forward_dir.mulScalar(delta_time * dims.startup_glide_speed));
+        app.player_pos = tmp;
     }
 
     if (app.last_level_complete) {
@@ -1041,74 +1035,74 @@ fn updateSimulation(app: *App, raw_delta_time: f32, inputs: FrameInputs) void {
     const edges = &app.map.items(.edges)[app.current_room];
 
     // Check if the player is close to a wall.
-    if (app.player_pos[0] > dims.room_width - dims.collision_tolerance) {
+    if (app.player_pos.v[0] > dims.room_width - dims.collision_tolerance) {
         // Check if they are in the door area
-        if (abs(app.player_pos[2]) < dims.door_width - dims.collision_tolerance and
+        if (abs(app.player_pos.v[2]) < dims.door_width - dims.collision_tolerance and
             edges[app.current_rotation +% 0].to_room != NO_ROOM and
             !moving_backwards)
         {
             // In the door, check for transfer to next room
-            if (app.player_pos[0] > dims.room_width + dims.collision_tolerance) {
-                app.player_pos[0] -= 2 * dims.room_width;
+            if (app.player_pos.v[0] > dims.room_width + dims.collision_tolerance) {
+                app.player_pos.v[0] -= 2 * dims.room_width;
                 app.moveCurrentRoom(0);
             }
         } else {
             // Too close to the wall but not in the door, clamp onto the wall
-            app.player_pos[0] = dims.room_width - dims.collision_tolerance;
+            app.player_pos.v[0] = dims.room_width - dims.collision_tolerance;
         }
     }
-    if (app.player_pos[2] < -dims.room_width + dims.collision_tolerance) {
+    if (app.player_pos.v[2] < -dims.room_width + dims.collision_tolerance) {
         // Check if they are in the door area
-        if (abs(app.player_pos[0]) < dims.door_width - dims.collision_tolerance and
+        if (abs(app.player_pos.v[0]) < dims.door_width - dims.collision_tolerance and
             edges[app.current_rotation +% 1].to_room != NO_ROOM and
             !moving_backwards)
         {
             // In the door, check for transfer to next room
-            if (app.player_pos[2] < -dims.room_width - dims.collision_tolerance) {
-                app.player_pos[2] += 2 * dims.room_width;
+            if (app.player_pos.v[2] < -dims.room_width - dims.collision_tolerance) {
+                app.player_pos.v[2] += 2 * dims.room_width;
                 app.moveCurrentRoom(1);
             }
         } else {
             // Too close to the wall but not in the door, clamp onto the wall
-            app.player_pos[2] = -dims.room_width + dims.collision_tolerance;
+            app.player_pos.v[2] = -dims.room_width + dims.collision_tolerance;
         }
     }
-    if (app.player_pos[0] < -dims.room_width + dims.collision_tolerance) {
+    if (app.player_pos.v[0] < -dims.room_width + dims.collision_tolerance) {
         // Check if they are in the door area
-        if (abs(app.player_pos[2]) < dims.door_width - dims.collision_tolerance and
+        if (abs(app.player_pos.v[2]) < dims.door_width - dims.collision_tolerance and
             edges[app.current_rotation +% 2].to_room != NO_ROOM and
             !moving_backwards)
         {
             // In the door, check for transfer to next room
-            if (app.player_pos[0] < -dims.room_width - dims.collision_tolerance) {
-                app.player_pos[0] += 2 * dims.room_width;
+            if (app.player_pos.v[0] < -dims.room_width - dims.collision_tolerance) {
+                app.player_pos.v[0] += 2 * dims.room_width;
                 app.moveCurrentRoom(2);
             }
         } else {
             // Too close to the wall but not in the door, clamp onto the wall
-            app.player_pos[0] = -dims.room_width + dims.collision_tolerance;
+            app.player_pos.v[0] = -dims.room_width + dims.collision_tolerance;
         }
     }
-    if (app.player_pos[2] > dims.room_width - dims.collision_tolerance) {
+    if (app.player_pos.v[2] > dims.room_width - dims.collision_tolerance) {
         // Check if they are in the door area
-        if (abs(app.player_pos[0]) < dims.door_width - dims.collision_tolerance and
+        if (abs(app.player_pos.v[0]) < dims.door_width - dims.collision_tolerance and
             edges[app.current_rotation +% 3].to_room != NO_ROOM and
             !moving_backwards)
         {
             // In the door, check for transfer to next room
-            if (app.player_pos[2] > dims.room_width + dims.collision_tolerance) {
-                app.player_pos[2] -= 2 * dims.room_width;
+            if (app.player_pos.v[2] > dims.room_width + dims.collision_tolerance) {
+                app.player_pos.v[2] -= 2 * dims.room_width;
                 app.moveCurrentRoom(3);
             }
         } else {
             // Too close to the wall but not in the door, clamp onto the wall
-            app.player_pos[2] = dims.room_width - dims.collision_tolerance;
+            app.player_pos.v[2] = dims.room_width - dims.collision_tolerance;
         }
     }
 
-    app.facing_dir = if (abs(app.forward_dir[0]) > abs(app.forward_dir[2]))
-        if (app.forward_dir[0] > 0) 0 else 2
-    else if (app.forward_dir[2] > 0) 3 else 1;
+    app.facing_dir = if (abs(app.forward_dir.v[0]) > abs(app.forward_dir.v[2]))
+        if (app.forward_dir.v[0] > 0) 0 else 2
+    else if (app.forward_dir.v[2] > 0) 3 else 1;
 
     {
         const cksum = (@as(u32, app.current_room) << 6) |
@@ -1232,7 +1226,7 @@ fn abs(x: anytype) @TypeOf(x) {
     return if (x < 0) -x else x;
 }
 
-fn lookAtRh(eye: Vec, target: Vec, up: Vec) Mat {
+fn lookAtRh(eye: Vec3, target: Vec3, up: Vec3) Mat4x4 {
     _ = eye;
     _ = target;
     _ = up;
@@ -1240,7 +1234,7 @@ fn lookAtRh(eye: Vec, target: Vec, up: Vec) Mat {
     @panic("lookAtRh unimplemented");
 }
 
-fn perspectiveFovRh(fovy: f32, aspect: f32, near: f32, far: f32) Mat {
+fn perspectiveFovRh(fovy: f32, aspect: f32, near: f32, far: f32) Mat4x4 {
     // TODO
     _ = fovy;
     _ = aspect;
@@ -1249,20 +1243,13 @@ fn perspectiveFovRh(fovy: f32, aspect: f32, near: f32, far: f32) Mat {
     @panic("perspectiveFovRh unimplemented");
 }
 
-fn mul(a: Mat, b: Mat) Mat {
-    // TODO
-    _ = a;
-    _ = b;
-    @panic("mul unimplemented");
-}
-
 fn updateViewUniforms(app: *App, queue: *gpu.Queue, size: [2]u32) void {
     const eye_pos = app.player_pos;
 
     const view = lookAtRh(
         eye_pos, // eye
-        eye_pos + app.look_dir, // target
-        .{ 0.0, 1.0, 0.0, 0.0 }, // up
+        eye_pos.add(&app.look_dir), // target
+        Vec3.init(0.0, 1.0, 0.0), // up
     );
 
     const aspect_ratio = @as(f32, @floatFromInt(size[0])) / @as(f32, @floatFromInt(size[1]));
@@ -1276,9 +1263,9 @@ fn updateViewUniforms(app: *App, queue: *gpu.Queue, size: [2]u32) void {
 
     // Update the view uniforms
     var uniforms: ViewUniforms = .{
-        .view_proj = mul(view, proj),
+        .view_proj = view.mul(&proj),
         .inv_screen_size = .{ 1.0 / @as(f32, @floatFromInt(size[0])), 1.0 / @as(f32, @floatFromInt(size[1])) },
-        .flat_look_xz = .{ app.forward_dir[0], app.forward_dir[2] },
+        .flat_look_xz = .{ app.forward_dir.v[0], app.forward_dir.v[2] },
     };
     queue.writeBuffer(app.view_uniform_buffer, 0, std.mem.asBytes(&uniforms));
 }
@@ -1287,17 +1274,17 @@ fn updateHeldObjectUniforms(app: *App, queue: *gpu.Queue) void {
     const fwd_dist: f32 = std.math.sqrt2 * 0.05;
     const right_dist: f32 = std.math.sqrt2 * 0.05;
     const held_scale: f32 = 0.7;
-    const object_pos = app.player_pos + @as(Vec, @splat(fwd_dist)) * app.forward_dir + @as(Vec, @splat(right_dist)) * app.right_dir + Vec{ 0, dims.held_height - dims.player_height, 0, 0 };
+    const object_pos = app.player_pos.add(&app.forward_dir.mulScalar(fwd_dist)).add(&app.right_dir.mulScalar(right_dist)).add(&Vec3.init(0, dims.held_height - dims.player_height, 0));
     const plane = Plane2{
-        .normal = .{ app.forward_dir[0], app.forward_dir[2] },
+        .normal = Vec2.init(app.forward_dir.v[0], app.forward_dir.v[2]),
     };
-    const projected_pos = plane.projectPoint(.{ object_pos[0], object_pos[2] });
-    const scale = Vec{ held_scale, held_scale, held_scale, 1.0 };
+    const projected_pos = plane.projectPoint(Vec2.init(object_pos.v[0], object_pos.v[2]));
+    const scale = Vec4.init(held_scale, held_scale, held_scale, 1.0);
     const aabb = app.meshes.cube.aabb;
     const uniforms = ObjectUniforms{
-        .transform_0 = scale * Vec{ app.forward_dir[0], 0, app.right_dir[0], object_pos[0] },
-        .transform_1 = scale * Vec{ app.forward_dir[1], 1, app.right_dir[1], object_pos[1] },
-        .transform_2 = scale * Vec{ app.forward_dir[2], 0, app.right_dir[2], object_pos[2] },
+        .transform_0 = scale.mul(&Vec4.init(app.forward_dir.v[0], 0, app.right_dir.v[0], object_pos.v[0])),
+        .transform_1 = scale.mul(&Vec4.init(app.forward_dir.v[1], 1, app.right_dir.v[1], object_pos.v[1])),
+        .transform_2 = scale.mul(&Vec4.init(app.forward_dir.v[2], 0, app.right_dir.v[2], object_pos.v[2])),
         .color_a = colorToVec(app.map.items(.color)[app.held_cube][0]),
         .color_b = colorToVec(app.map.items(.color)[app.held_cube][1]),
         .blend_offset_scale = calcOffsetScale(.{
@@ -1308,52 +1295,46 @@ fn updateHeldObjectUniforms(app: *App, queue: *gpu.Queue) void {
     queue.writeBuffer(app.held_object_uniform_buffer, 0, std.mem.asBytes(&uniforms));
 }
 
-fn normalize3(v: Vec) Vec {
-    _ = v;
-    @panic("normalize3 unimplemented");
-}
-
-fn matFromNormAxisAngle(axis: Vec, angle: f32) Mat {
+fn matFromNormAxisAngle(axis: Vec3, angle: f32) Mat4x4 {
     _ = axis;
     _ = angle;
     @panic("matFromNormAxisAngle unimplemented");
 }
 
 fn updatePostProcessUniforms(app: *App, queue: *gpu.Queue) void {
-    const axis = normalize3(Vec{ 1.0, 1.0, 1.0, 0.0 });
+    const axis = Vec3.init(1.0, 1.0, 1.0).normalize(1.0);
     const angle = app.actual_color_rotation * 0.333333 * std.math.tau;
     const mat = matFromNormAxisAngle(axis, angle);
     const uniforms = PostProcessUniforms{
-        .color_rotation_0 = mat[0],
-        .color_rotation_1 = mat[1],
-        .color_rotation_2 = mat[2],
+        .color_rotation_0 = mat.v[0],
+        .color_rotation_1 = mat.v[1],
+        .color_rotation_2 = mat.v[2],
         .colorblind_mode = app.colorblind_mode,
     };
     queue.writeBuffer(app.post_process_uniform_buffer, 0, std.mem.asBytes(&uniforms));
 }
 
-fn colorToVec(color: u32) Vec {
-    const ucolor = Vec{
+fn colorToVec(color: u32) Vec4 {
+    const ucolor = Vec4.init(
         @floatFromInt(@as(u8, @truncate(color >> 0))),
         @floatFromInt(@as(u8, @truncate(color >> 8))),
         @floatFromInt(@as(u8, @truncate(color >> 16))),
         @floatFromInt(@as(u8, @truncate(color >> 24))),
-    };
-    return ucolor * @as(Vec, @splat(@as(f32, 1.0 / 255.0)));
+    );
+    return ucolor.mulScalar(1.0 / 255.0);
 }
 
-fn vecToColor(vec: Vec) u32 {
-    const scaled = vec * @as(Vec, @splat(@as(f32, 255.0)));
-    const r: u32 = @intCast(std.math.clamp(@as(i32, @intFromFloat(scaled[0])), 0, 255));
-    const g: u32 = @intCast(std.math.clamp(@as(i32, @intFromFloat(scaled[1])), 0, 255));
-    const b: u32 = @intCast(std.math.clamp(@as(i32, @intFromFloat(scaled[2])), 0, 255));
-    const a: u32 = @intCast(std.math.clamp(@as(i32, @intFromFloat(scaled[3])), 0, 255));
+fn vecToColor(vec: Vec4) u32 {
+    const scaled = vec.mulScalar(255.0);
+    const r: u32 = @intCast(std.math.clamp(@as(i32, @intFromFloat(scaled.v[0])), 0, 255));
+    const g: u32 = @intCast(std.math.clamp(@as(i32, @intFromFloat(scaled.v[1])), 0, 255));
+    const b: u32 = @intCast(std.math.clamp(@as(i32, @intFromFloat(scaled.v[2])), 0, 255));
+    const a: u32 = @intCast(std.math.clamp(@as(i32, @intFromFloat(scaled.v[3])), 0, 255));
     return (r << 0) | (g << 8) | (b << 16) | (a << 24);
 }
 
 fn darkenColor(color: u32) u32 {
-    const factor: Vec = @splat(@as(f32, 0.9));
-    return vecToColor(factor * colorToVec(color));
+    return vecToColor(colorToVec(color).mulScalar(0.9));
 }
 
 fn updateInstances(app: *App, queue: *gpu.Queue) void {
@@ -1390,8 +1371,8 @@ fn updateInstances(app: *App, queue: *gpu.Queue) void {
     right_diagonal_normal[1] += facing_deltas[left][1];
 
     // Note that player_pos is an xyz vector but the normals are xz, so the z index doesn't match.
-    const left_dot = app.player_pos[0] * left_diagonal_normal[0] + app.player_pos[2] * left_diagonal_normal[1];
-    const right_dot = app.player_pos[0] * right_diagonal_normal[0] + app.player_pos[2] * right_diagonal_normal[1];
+    const left_dot = app.player_pos.v[0] * left_diagonal_normal[0] + app.player_pos.v[2] * left_diagonal_normal[1];
+    const right_dot = app.player_pos.v[0] * right_diagonal_normal[0] + app.player_pos.v[2] * right_diagonal_normal[1];
 
     if (left_dot > 0) {
         b.addDiagonalInstances(app, forward, left);
@@ -1409,7 +1390,7 @@ fn updateInstances(app: *App, queue: *gpu.Queue) void {
     // TODO-OPT: This could be done in a compute shader
     // TODO-OPT: This would be an easy place to do culling, since we have AABBs available.
     const facing_plane = Plane2{
-        .normal = .{ app.forward_dir[0], app.forward_dir[2] },
+        .normal = Vec2.init(app.forward_dir.v[0], app.forward_dir.v[2]),
     };
     calculateBoxes(facing_plane, app.meshes.room.aabb, b.rooms.slice());
     calculateBoxes(facing_plane, app.meshes.wall.aabb, b.walls.slice());
