@@ -85,6 +85,9 @@ last_mouse_y: f32 = 0,
 
 timer: mach.Timer,
 
+fb_width: u32,
+fb_height: u32,
+
 // 0: none,
 // 1: simulate no red cones
 // 2: simulate no green cones
@@ -175,7 +178,7 @@ pub const Plane2 = struct {
     normal: Vec2,
 
     pub fn normalize(self: *Plane2) void {
-        const tmp = self.normal.normalize(1.0);
+        const tmp = self.normal.normalize(0.0);
         self.normal = tmp;
     }
 
@@ -604,6 +607,9 @@ pub fn post_init(appm: *Mod, corem: *mach.Core.Mod) !void {
         },
     });
 
+    const fb_width = corem.get(core.main_window, .framebuffer_width).?;
+    const fb_height = corem.get(core.main_window, .framebuffer_height).?;
+
     appm.init(.{
         .instanced_pipeline_aabb = instanced_pipeline_aabb,
         .instanced_pipeline_screenspace = instanced_pipeline_screenspace,
@@ -616,6 +622,9 @@ pub fn post_init(appm: *Mod, corem: *mach.Core.Mod) !void {
         .held_object_uniform_buffer = held_object_buffer,
         .post_process_bindings_layout = post_process_bindings_layout,
         .post_process_uniform_buffer = post_process_buffer,
+
+        .fb_width = fb_width,
+        .fb_height = fb_height,
 
         .swap_chain_format = swap_chain_format,
 
@@ -713,10 +722,7 @@ pub fn update(appm: *Mod, corem: *mach.Core.Mod) !void {
 
     // Update gpu state
     const queue = core.device.getQueue();
-    const size = [_]u32{
-        corem.get(core.main_window, .framebuffer_width).?,
-        corem.get(core.main_window, .framebuffer_height).?,
-    };
+    const size = [_]u32{ app.fb_width, app.fb_height };
     app.updateViewUniforms(queue, size);
     if (app.held_cube != NO_ROOM) {
         app.updateHeldObjectUniforms(queue);
@@ -865,23 +871,22 @@ pub fn update(appm: *Mod, corem: *mach.Core.Mod) !void {
 }
 
 fn updateInputState(app: *App, corem: *mach.Core.Mod) FrameInputs {
+    _ = corem;
     var inputs: FrameInputs = .{};
     var iter = mach.core.pollEvents();
     while (iter.next()) |event| {
         switch (event) {
-            .close => corem.schedule(.exit),
+            .close => std.process.exit(0),
             .key_press => |ev| switch (ev.key) {
                 .q,
                 .escape,
                 => {
                     if (app.mouse_captured) {
-                        {
-                            //core.setCursorMode(.normal) catch break :blk;
-                            app.mouse_captured = false;
-                            app.mouse_pos_valid = false;
-                        }
+                        mach.core.setCursorMode(.normal);
+                        app.mouse_captured = false;
+                        app.mouse_pos_valid = false;
                     } else {
-                        corem.schedule(.exit);
+                        std.process.exit(0);
                     }
                 },
                 .w, .up => {
@@ -959,12 +964,15 @@ fn updateInputState(app: *App, corem: *mach.Core.Mod) FrameInputs {
             },
             .mouse_press => {
                 if (!app.mouse_captured) {
-                    {
-                        //core.setCursorMode(.disabled) catch break :blk;
-                        app.mouse_captured = true;
-                        app.mouse_pos_valid = false;
-                    }
+                    mach.core.setCursorMode(.disabled);
+                    app.mouse_captured = true;
+                    app.mouse_pos_valid = false;
                 }
+            },
+            .framebuffer_resize => |fr| {
+                std.debug.print("resize: {} {}\n", .{ fr.width, fr.height });
+                app.fb_width = fr.width;
+                app.fb_height = fr.height;
             },
             else => {},
         }
@@ -1227,20 +1235,27 @@ fn abs(x: anytype) @TypeOf(x) {
 }
 
 fn lookAtRh(eye: Vec3, target: Vec3, up: Vec3) Mat4x4 {
-    _ = eye;
-    _ = target;
-    _ = up;
-    // TODO
-    @panic("lookAtRh unimplemented");
+    const fwd = eye.sub(&target).normalize(0.0);
+    const right = up.cross(&fwd).normalize(0.0);
+    const real_up = fwd.cross(&right).normalize(0.0);
+    return Mat4x4.init(
+        &Vec4.init(right.v[0], right.v[1], right.v[2], -right.dot(&eye)),
+        &Vec4.init(real_up.v[0], real_up.v[1], real_up.v[2], -real_up.dot(&eye)),
+        &Vec4.init(fwd.v[0], fwd.v[1], fwd.v[2], -fwd.dot(&eye)),
+        &Vec4.init(0.0, 0.0, 0.0, 1.0),
+    );
 }
 
 fn perspectiveFovRh(fovy: f32, aspect: f32, near: f32, far: f32) Mat4x4 {
-    // TODO
-    _ = fovy;
-    _ = aspect;
-    _ = near;
-    _ = far;
-    @panic("perspectiveFovRh unimplemented");
+    const h = @cos(0.5 * fovy) / @sin(0.5 * fovy);
+    const w = h / aspect;
+    const r = far / (near - far);
+    return Mat4x4.init(
+        &Vec4.init(w, 0.0, 0.0, 0.0),
+        &Vec4.init(0.0, h, 0.0, 0.0),
+        &Vec4.init(0.0, 0.0, r, -1.0),
+        &Vec4.init(0.0, 0.0, r * near, 0.0),
+    ).transpose();
 }
 
 fn updateViewUniforms(app: *App, queue: *gpu.Queue, size: [2]u32) void {
@@ -1263,11 +1278,20 @@ fn updateViewUniforms(app: *App, queue: *gpu.Queue, size: [2]u32) void {
 
     // Update the view uniforms
     var uniforms: ViewUniforms = .{
-        .view_proj = view.mul(&proj),
+        .view_proj = proj.mul(&view),
         .inv_screen_size = .{ 1.0 / @as(f32, @floatFromInt(size[0])), 1.0 / @as(f32, @floatFromInt(size[1])) },
         .flat_look_xz = .{ app.forward_dir.v[0], app.forward_dir.v[2] },
     };
     queue.writeBuffer(app.view_uniform_buffer, 0, std.mem.asBytes(&uniforms));
+}
+
+fn printMatrix(mat: Mat4x4) void {
+    std.debug.print("{} {} {} {}\n{} {} {} {}\n{} {} {} {}\n{} {} {} {}\n", .{
+        mat.v[0].v[0], mat.v[0].v[1], mat.v[0].v[2], mat.v[0].v[3],
+        mat.v[1].v[0], mat.v[1].v[1], mat.v[1].v[2], mat.v[1].v[3],
+        mat.v[2].v[0], mat.v[2].v[1], mat.v[2].v[2], mat.v[2].v[3],
+        mat.v[3].v[0], mat.v[3].v[1], mat.v[3].v[2], mat.v[3].v[3],
+    });
 }
 
 fn updateHeldObjectUniforms(app: *App, queue: *gpu.Queue) void {
@@ -1296,13 +1320,34 @@ fn updateHeldObjectUniforms(app: *App, queue: *gpu.Queue) void {
 }
 
 fn matFromNormAxisAngle(axis: Vec3, angle: f32) Mat4x4 {
-    _ = axis;
-    _ = angle;
-    @panic("matFromNormAxisAngle unimplemented");
+    const cosa = @cos(angle);
+    const sina = @sin(angle);
+    const ncosa = 1.0 - cosa;
+    return Mat4x4.init(
+        &Vec4.init(
+            cosa + axis.v[2] * axis.v[2] * ncosa,
+            axis.v[0] * axis.v[1] * ncosa - axis.v[2] * sina,
+            axis.v[0] * axis.v[2] * ncosa + axis.v[1] * sina,
+            0.0,
+        ),
+        &Vec4.init(
+            axis.v[0] * axis.v[1] * ncosa + axis.v[2] * sina,
+            cosa + axis.v[1] * axis.v[1] * ncosa,
+            axis.v[1] * axis.v[2] * ncosa - axis.v[0] * sina,
+            0.0,
+        ),
+        &Vec4.init(
+            axis.v[0] * axis.v[2] * ncosa - axis.v[1] * sina,
+            axis.v[1] * axis.v[2] * ncosa + axis.v[0] * sina,
+            cosa + axis.v[2] * axis.v[2] * ncosa,
+            0.0,
+        ),
+        &Vec4.init(0.0, 0.0, 0.0, 1.0),
+    ).transpose();
 }
 
 fn updatePostProcessUniforms(app: *App, queue: *gpu.Queue) void {
-    const axis = Vec3.init(1.0, 1.0, 1.0).normalize(1.0);
+    const axis = Vec3.init(1.0, 1.0, 1.0).normalize(0.0);
     const angle = app.actual_color_rotation * 0.333333 * std.math.tau;
     const mat = matFromNormAxisAngle(axis, angle);
     const uniforms = PostProcessUniforms{
